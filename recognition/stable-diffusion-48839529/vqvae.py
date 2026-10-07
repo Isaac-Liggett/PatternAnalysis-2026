@@ -153,11 +153,11 @@ class VectorQuantizer(nn.Module):
 
 class VQModel(nn.Module):
     def __init__(self, ch=128, ch_mult=(1, 2), n_res=1,
-                 n_embed=8192, embed_dim=3, beta=0.25):
+                 n_embed=8192, embed_dim=3, beta=0.25, in_channel=3):
         super().__init__()
-        self.encoder = Encoder(ch, ch_mult, n_res, n_z=embed_dim)
+        self.encoder = Encoder(ch, ch_mult, n_res, n_z=embed_dim, in_ch=in_channel)
         self.quantizer = VectorQuantizer(n_embed, embed_dim, beta)
-        self.decoder = Decoder(ch, ch_mult, n_res, n_z=embed_dim)
+        self.decoder = Decoder(ch, ch_mult, n_res, n_z=embed_dim, out_ch=in_channel)
 
     def encode(self, x):
         """Continuous pre-quantisation latent. This is what the LDM diffuses over."""

@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 
 from vqvae import VQModel, reset_dead_codes
-from dataloader import get_dataloader
+from dataset import get_dataloader
 
 BATCH_SIZE = 3
 EPOCHS = 50
@@ -31,6 +31,7 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=LR)
     parser.add_argument("--image-size", type=int, default=IMAGE_SIZE)
     parser.add_argument("--ch", type=int, default=CH)
+    parser.add_argument("--in-ch", type=float, default=IN_CHANNELS)
     parser.add_argument("--n-embed", type=int, default=N_EMBED)
     parser.add_argument("--embed-dim", type=int, default=EMBED_DIM)
     parser.add_argument("--beta", type=float, default=BETA,
@@ -140,7 +141,7 @@ if __name__ == "__main__":
           f"[{sample.min():.3f}, {sample.max():.3f}]")
 
     config = dict(ch=args.ch, ch_mult=CH_MULT, n_res=N_RES, n_embed=args.n_embed,
-                  embed_dim=args.embed_dim, beta=args.beta, in_ch=IN_CHANNELS)
+                  embed_dim=args.embed_dim, beta=args.beta, in_channel=args.in_ch)
     model = VQModel(**config).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, betas=(0.5, 0.9))
 
