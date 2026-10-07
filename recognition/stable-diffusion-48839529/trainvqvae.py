@@ -128,7 +128,7 @@ if __name__ == "__main__":
     loss_curve_path = args.output_dir / "loss_curve.png"
 
     dataloader = get_dataloader(
-        str(args.data_dir / "keras_png_slices_train"),
+        str(args.data_dir),
         image_size=args.image_size,
         batch_size=args.batch_size,
         num_workers=0
