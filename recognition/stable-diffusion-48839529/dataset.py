@@ -8,7 +8,7 @@ class ImageFolderDataset(Dataset):
     def __init__(self, root_dir, image_size=64):
         self.paths = [
             p for p in Path(root_dir).rglob("*")
-            if p.suffix.lower() == ".jpg" or p.suffix.lower() == ".png"
+            if p.suffix.lower() == ".jpg" or p.suffix.lower() == ".jpeg" or p.suffix.lower() == ".png"
         ]
         if len(self.paths) == 0:
             raise RuntimeError(f"No images found under {root_dir}")
