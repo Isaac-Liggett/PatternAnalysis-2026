@@ -13,6 +13,10 @@ def timestep_embedding(t, dim, max_period=10000):
     args = t.float()[:, None] * freqs[None]
     return torch.cat([torch.sin(args), torch.cos(args)], dim=-1)   # (B, dim)
 
+def make_schedule(T):
+    betas = torch.linspace(1.5e-3 ** 0.5, 1.95e-2 ** 0.5, T) ** 2 
+    return torch.cumprod(1.0 - betas, dim=0)
+
 class Attn(nn.Module):
     """Single-head spatial self-attention."""
     def __init__(self, c):
@@ -30,8 +34,12 @@ class Attn(nn.Module):
         return x + self.proj(h)
 
 class DenoisingUNet(nn.Module):
-    def __init__(self, channels: int = 3):
+    def __init__(self, channels: int = 3, T: int = 1000):
         super().__init__()
+
+        self.T = T
+        betas = torch.linspace(1.5e-3 ** 0.5, 1.95e-2 ** 0.5, T) ** 2
+        self.register_buffer("abar", torch.cumprod(1.0 - betas, dim=0), persistent=False)
 
         # --- Timestep embedding ---
         self.t_dim = 64
@@ -155,3 +163,28 @@ class DenoisingUNet(nn.Module):
         xd43 = relu(self.bnd43(self.d43(xd42)))
 
         return self.outconv(xd43)
+    
+    def add_noise(self, z, t, eps):
+        a = self.abar[t].view(-1, 1, 1, 1)
+        return a.sqrt() * z + (1 - a).sqrt() * eps
+    
+    @torch.no_grad()
+    def sample(self, shape, n_steps=50):
+        """Deterministic DDIM (eta = 0). Returns a latent in the scaled space;
+        the caller multiplies by latent_std and decodes."""
+        was_training = self.training
+        self.eval()
+        dev = self.abar.device
+
+        ts = torch.linspace(self.T - 1, 0, n_steps).round().long().tolist()
+        z = torch.randn(shape, device=dev)
+        for i, t in enumerate(ts):
+            a_t = self.abar[t]
+            a_prev = self.abar[ts[i + 1]] if i + 1 < len(ts) else torch.ones_like(a_t)
+
+            eps = self(z, torch.full((shape[0],), t, device=dev, dtype=torch.long))
+            z0_hat = (z - (1 - a_t).sqrt() * eps) / a_t.sqrt()
+            z = a_prev.sqrt() * z0_hat + (1 - a_prev).sqrt() * eps
+
+        self.train(was_training)
+        return z

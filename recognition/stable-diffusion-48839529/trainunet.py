@@ -60,6 +60,15 @@ if __name__ == "__main__":
     print(f"Pytorch running on {device}")
     args = parse_args()
 
+    # initial checks
+    unet = DenoisingUNet(channels=3)
+    x = torch.randn(2, 3, 64, 64)
+    t = torch.tensor([0, 999])
+    out = unet(x, t)
+    assert out.shape == x.shape
+    print(unet.abar[0].item(), unet.abar[-1].item())     # ~1.0 and ~1e-4
+    print(unet.sample((2, 3, 64, 64), n_steps=5).shape)   # sampler runs end to end
+
     args.output_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_dir = args.output_dir / "checkpoints"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
