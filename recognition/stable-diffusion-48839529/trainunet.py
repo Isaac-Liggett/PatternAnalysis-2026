@@ -18,7 +18,6 @@ T = 1000   # training timesteps (the DDIM step count is a sampling-time choice)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--vqvae-ckpt", type=str, required=True)
