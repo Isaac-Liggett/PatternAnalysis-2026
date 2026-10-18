@@ -150,37 +150,37 @@ def plot_results(results, output_dir):
 
     # 1. SSIM across checkpoints
     ax = axes[0, 0]
-    ax.plot(epochs, [r["mean_ssim"] for r in results], marker="o")
+    ax.scatter(epochs, [r["mean_ssim"] for r in results], marker="o")
     ax.set_ylabel("Mean SSIM")
     ax.set_title("Reconstruction Quality (SSIM ↑)")
 
     # 2. Training loss (stability)
     ax = axes[0, 1]
-    ax.plot(epochs, [r["train_loss"] for r in results], marker="o", color="darkorange")
+    ax.scatter(epochs, [r["train_loss"] for r in results], marker="o", color="darkorange")
     ax.set_ylabel("Training Loss")
     ax.set_title("Training Stability (Loss ↓)")
 
     # 3. Reconstruction L1
     ax = axes[0, 2]
-    ax.plot(epochs, [r["mean_recon_l1"] for r in results], marker="o", color="green")
+    ax.scatter(epochs, [r["mean_recon_l1"] for r in results], marker="o", color="green")
     ax.set_ylabel("Mean L1 Reconstruction")
     ax.set_title("Reconstruction L1 ↓")
 
     # 4. Throughput / runtime
     ax = axes[1, 1]
-    ax.plot(epochs, [r["images_per_sec"] for r in results], marker="s", color="purple")
+    ax.scatter(epochs, [r["images_per_sec"] for r in results], marker="s", color="purple")
     ax.set_ylabel("Images / sec")
     ax.set_title("Inference Throughput")
 
     # 5. Codebook utilisation
     ax = axes[1, 2]
-    ax.plot(epochs, [r["codebook_usage"] for r in results], marker="^",
-            color="teal", label="Usage frac")
+    ax.scatter(epochs, [r["codebook_usage"] for r in results], marker="^",
+               color="teal", label="Usage frac")
     ax.set_ylabel("Usage fraction")
     ax.set_ylim(0, 1.05)
     ax2 = ax.twinx()
-    ax2.plot(epochs, [r["codebook_perplexity"] for r in results], marker="v",
-             color="crimson", label="Perplexity")
+    ax2.scatter(epochs, [r["codebook_perplexity"] for r in results], marker="v",
+                color="crimson", label="Perplexity")
     ax2.set_ylabel("Perplexity")
     ax.set_title("Codebook Health")
     lines1, labels1 = ax.get_legend_handles_labels()
@@ -195,7 +195,7 @@ def plot_results(results, output_dir):
     fig.tight_layout()
     fig.savefig(output_dir / "vqvae_eval_summary.png", dpi=150)
     plt.close(fig)
-    print(f"Saved plot → {output_dir / 'vqvae_eval_summary.png'}")
+    print(f"Saved plot -> {output_dir / 'vqvae_eval_summary.png'}")
 
 
 # ---------------------------------------------------------------------------
@@ -249,10 +249,10 @@ def scan_checkpoints(directory: Path):
             if "config" in ckpt and "model_state_dict" in ckpt:
                 valid.append(p)
             else:
-                print(f"  ⚠ Skipping {p.name}: missing 'config' or "
+                print(f"  [!] Skipping {p.name}: missing 'config' or "
                       f"'model_state_dict' keys (not a VQ-VAE checkpoint?)")
         except Exception as e:
-            print(f"  ⚠ Skipping {p.name}: failed to load ({e})")
+            print(f"  [!] Skipping {p.name}: failed to load ({e})")
 
     if not valid:
         raise RuntimeError(
@@ -280,13 +280,13 @@ def main():
     print(f"Test set: {len(dataloader.dataset)} images from {args.data_dir}")
 
     # Scan checkpoint directory for valid VQ-VAE checkpoints.
-    print(f"\nScanning {args.checkpoint_dir} for VQ-VAE checkpoints …")
+    print(f"\nScanning {args.checkpoint_dir} for VQ-VAE checkpoints ...")
     ckpt_paths = scan_checkpoints(args.checkpoint_dir)
     print(f"Found {len(ckpt_paths)} valid checkpoint(s).")
 
     results = []
     for ckpt_path in ckpt_paths:
-        print(f"\n{'─' * 50}")
+        print(f"\n{'-' * 50}")
         print(f"Evaluating: {ckpt_path}")
         metrics = evaluate_checkpoint(ckpt_path, dataloader, device)
         results.append(metrics)
@@ -299,22 +299,22 @@ def main():
     json_path = args.output_dir / "vqvae_eval_metrics.json"
     with open(json_path, "w") as f:
         json.dump(results, f, indent=2)
-    print(f"\nSaved metrics → {json_path}")
+    print(f"\nSaved metrics -> {json_path}")
 
-    # Summary plots (only meaningful with ≥ 2 checkpoints).
+    # Summary plots (only meaningful with >= 2 checkpoints).
     if len(results) >= 2:
         plot_results(results, args.output_dir)
 
     # Print final summary table.
-    print(f"\n{'═' * 62}")
+    print(f"\n{'=' * 62}")
     print(f"{'Epoch':>6}  {'SSIM':>8}  {'L1':>8}  {'Q-Loss':>8}  "
           f"{'img/s':>7}  {'Usage':>7}")
-    print(f"{'─' * 62}")
+    print(f"{'-' * 62}")
     for r in results:
         print(f"{r['epoch']:>6d}  {r['mean_ssim']:>8.4f}  "
               f"{r['mean_recon_l1']:>8.4f}  {r['mean_qloss']:>8.4f}  "
               f"{r['images_per_sec']:>7.1f}  {r['codebook_usage']:>6.1%}")
-    print(f"{'═' * 62}")
+    print(f"{'=' * 62}")
 
 
 if __name__ == "__main__":
