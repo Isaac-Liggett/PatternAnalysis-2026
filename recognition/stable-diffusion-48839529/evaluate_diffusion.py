@@ -39,23 +39,18 @@ from diffusion_model import StableDiffusion
 from dataset import get_dataloader, ImageFolderDataset
 
 
-# ---------------------------------------------------------------------------
-# SSIM (pure PyTorch, self-contained)
-# ---------------------------------------------------------------------------
-
+# SSIM
 def _gaussian_kernel_1d(size: int, sigma: float, device):
     """1-D Gaussian kernel normalised to sum to 1."""
     coords = torch.arange(size, dtype=torch.float32, device=device) - size // 2
     g = torch.exp(-coords ** 2 / (2 * sigma ** 2))
     return g / g.sum()
 
-
 def _gaussian_kernel_2d(size: int, sigma: float, channels: int, device):
     """Separable 2-D Gaussian kernel shaped (channels, 1, size, size)."""
     k1d = _gaussian_kernel_1d(size, sigma, device)
     k2d = k1d[:, None] * k1d[None, :]
     return k2d.expand(channels, 1, size, size).contiguous()
-
 
 def ssim_batch(x, y, window_size=11, sigma=1.5, C1=0.01 ** 2, C2=0.03 ** 2):
     """Compute per-image SSIM between batches x and y of shape (B, C, H, W).
@@ -84,10 +79,7 @@ def ssim_batch(x, y, window_size=11, sigma=1.5, C1=0.01 ** 2, C2=0.03 ** 2):
     return ssim_map.mean(dim=(1, 2, 3))
 
 
-# ---------------------------------------------------------------------------
 # SSIM Evaluation: Generated Samples vs Test Dataset
-# ---------------------------------------------------------------------------
-
 @torch.no_grad()
 def compute_ssim_against_test(gen_images, test_loader, device, chunk_size=32):
     """Compute SSIM metrics comparing generated samples against the test set.
@@ -173,11 +165,8 @@ def compute_ssim_against_test(gen_images, test_loader, device, chunk_size=32):
     }
 
 
-# ---------------------------------------------------------------------------
 # Meehan et al. Three-Sample Non-Parametric Test for Data-Copying
 # (AISTATS 2020: "A Non-Parametric Test to Detect Data-Copying in Generative Models")
-# ---------------------------------------------------------------------------
-
 @torch.no_grad()
 def extract_representations(dataloader, model=None, space="latent", max_samples=None, device="cpu"):
     """Extract representations for a dataset in either latent or pixel space.
@@ -368,16 +357,14 @@ def meehan_three_sample_test(train_feats, test_feats, gen_feats, device="cpu"):
     """
     print("\nComputing nearest-neighbor distances to training set (Meehan et al. Test) …")
 
-    # 1. Distances from Test samples P to nearest neighbour in Train T: D_P
+    # distances
     d_test = compute_nearest_neighbor_distances(test_feats, train_feats, device=device)
-
-    # 2. Distances from Generated samples Q to nearest neighbour in Train T: D_Q
     d_gen = compute_nearest_neighbor_distances(gen_feats, train_feats, device=device)
 
     d_test_np = d_test.numpy()
     d_gen_np = d_gen.numpy()
 
-    # 3. Mann-Whitney test comparing D_Q vs D_P
+    # Mann-Whitney test comparing D_Q vs D_P
     test_res = mann_whitney_u_test(d_gen_np, d_test_np)
 
     z_u = test_res["z_score"]
@@ -423,16 +410,12 @@ def meehan_three_sample_test(train_feats, test_feats, gen_feats, device="cpu"):
         "dist_gen_to_train": d_gen_np.tolist(),
     }
 
-
-# ---------------------------------------------------------------------------
 # Visualisation & Reporting
-# ---------------------------------------------------------------------------
-
 def plot_evaluation(ssim_res, meehan_res, gen_images, output_dir):
     """Generate diagnostic figures for SSIM and the Meehan Three-Sample test."""
     output_dir = Path(output_dir)
 
-    # 1. Meehan Three-Sample Test Distance Distribution Plot
+    # Meehan Three-Sample Test Distance Distribution Plot
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
     d_test = np.array(meehan_res["dist_test_to_train"])
@@ -463,7 +446,7 @@ def plot_evaluation(ssim_res, meehan_res, gen_images, output_dir):
     plt.close(fig)
     print(f"Saved distance distribution plot → {fig_path}")
 
-    # 2. SSIM Distribution Plot
+    # SSIM Distribution Plot
     best_ssims = np.array(ssim_res["per_sample_best_ssim"])
     fig, ax = plt.subplots(figsize=(8, 5))
     ax.hist(best_ssims, bins=25, color="teal", edgecolor="black", alpha=0.7)
@@ -489,10 +472,7 @@ def plot_evaluation(ssim_res, meehan_res, gen_images, output_dir):
     print(f"Saved generated sample grid → {grid_path}")
 
 
-# ---------------------------------------------------------------------------
 # CLI & Execution
-# ---------------------------------------------------------------------------
-
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Evaluate Latent Diffusion Model (SSIM & Meehan et al. Data-Copying Test).",
@@ -584,7 +564,7 @@ def main():
         train_unet=False,
     )
 
-    # 1. Generate Synthetic Dataset
+    # Generating Synthetic Dataset
     print(f"\nGenerating {args.num_samples} synthetic images (DDIM steps={args.ddim_steps}) …")
     start_gen = time.perf_counter()
     gen_images = model.sample(
@@ -626,7 +606,7 @@ def main():
     print(f"  Training images: {len(train_loader.dataset)}")
     print(f"  Testing images:  {len(test_loader.dataset)}")
 
-    # 3. Compute SSIM against Test Dataset
+    # Compute SSIM against Test Dataset
     print(f"\n{'─' * 60}")
     print("EVALUATION 1: SSIM AGAINST TEST DATASET")
     print(f"{'─' * 60}")
@@ -641,7 +621,7 @@ def main():
     print(f"Max Best SSIM:        {ssim_results['best_match_ssim_max']:.4f}")
     print(f"Mean Pairwise SSIM:   {ssim_results['mean_pairwise_ssim']:.4f}")
 
-    # 4. Extract Representations for Meehan et al. Three-Sample Test
+    # Extract Representations for Meehan et al. Three-Sample Test
     print(f"\n{'─' * 60}")
     print(f"EVALUATION 2: MEEHAN ET AL. THREE-SAMPLE DATA-COPYING TEST ({args.metric_space.upper()} SPACE)")
     print(f"{'─' * 60}")
@@ -690,7 +670,7 @@ def main():
     print(f"  Data-copying p-value:      {meehan_results['p_value_copying_one_sided']:.4e}")
     print(f"\nVERDICT: {meehan_results['verdict']}")
 
-    # 5. Save Plots & Full Results
+    # Save Plots & Full Results
     plot_evaluation(ssim_results, meehan_results, gen_images, args.output_dir)
 
     metrics_dump = {

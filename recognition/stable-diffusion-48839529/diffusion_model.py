@@ -51,15 +51,9 @@ class StableDiffusion:
         self.freeze_vqvae(not train_vqvae)
         self.freeze_unet(not train_unet)
 
-    # ------------------------------------------------------------------
-    # Freeze / unfreeze helpers
-    # ------------------------------------------------------------------
-
     def freeze_vqvae(self, frozen=True):
         """Freeze or unfreeze the VQ-VAE parameters.
 
-        Parameters
-        ----------
         frozen : bool
             If ``True``, sets the VQ-VAE to eval mode and disables gradients.
             If ``False``, sets it to train mode and enables gradients.
@@ -72,8 +66,6 @@ class StableDiffusion:
     def freeze_unet(self, frozen=True):
         """Freeze or unfreeze the UNet parameters.
 
-        Parameters
-        ----------
         frozen : bool
             If ``True``, sets the UNet to eval mode and disables gradients.
             If ``False``, sets it to train mode and enables gradients.
@@ -83,17 +75,11 @@ class StableDiffusion:
         else:
             self.unet.train().requires_grad_(True)
 
-    # ------------------------------------------------------------------
-    # Construction helpers
-    # ------------------------------------------------------------------
-
     @classmethod
     def from_checkpoints(cls, vqvae_ckpt, unet_ckpt, image_size=256,
                          device=None, train_vqvae=False, train_unet=False):
         """Build a ``StableDiffusion`` from two checkpoint files.
 
-        Parameters
-        ----------
         vqvae_ckpt : str or Path
             Path to a VQ-VAE checkpoint (as saved by ``trainvqvae.py``).
         unet_ckpt : str or Path
@@ -121,15 +107,9 @@ class StableDiffusion:
                    image_size // f, vq["config"]["embed_dim"], device,
                    train_vqvae=train_vqvae, train_unet=train_unet)
 
-    # ------------------------------------------------------------------
-    # Individual checkpoint loaders
-    # ------------------------------------------------------------------
-
     def load_vqvae(self, ckpt_path, image_size=256, trainable=False):
         """Load VQ-VAE weights from a checkpoint into the existing model.
 
-        Parameters
-        ----------
         ckpt_path : str or Path
             Path to a VQ-VAE checkpoint.
         image_size : int
@@ -148,8 +128,6 @@ class StableDiffusion:
     def load_unet(self, ckpt_path, trainable=False):
         """Load UNet weights from a checkpoint into the existing model.
 
-        Parameters
-        ----------
         ckpt_path : str or Path
             Path to a UNet checkpoint.
         trainable : bool
@@ -160,10 +138,6 @@ class StableDiffusion:
         self.unet.load_state_dict(ckpt["model_state_dict"])
         self.latent_std = ckpt["latent_std"]
         self.freeze_unet(not trainable)
-
-    # ------------------------------------------------------------------
-    # Inference utilities
-    # ------------------------------------------------------------------
 
     @staticmethod
     def to_unit(x):
@@ -193,8 +167,6 @@ class StableDiffusion:
             out.append(self.decode(z).cpu())
             remaining -= b
         return torch.cat(out)
-
-    # Evaluation
 
     @torch.no_grad()
     def reconstruct(self, x):
