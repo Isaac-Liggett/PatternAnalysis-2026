@@ -2,6 +2,7 @@ from pathlib import Path
 import argparse
 
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 from tqdm import tqdm
@@ -103,17 +104,48 @@ def plot_curves(recon_losses, q_losses, perplexities, usages, save_path):
     fig.savefig(save_path)
     plt.close(fig)
 
+class LaplacianVarianceLoss(nn.Module):
+    def __init__(self, channels=3):
+        super(LaplacianVarianceLoss, self).__init__()
+        self.channels = channels
+        
+        kernel = torch.tensor([[ 0,  1,  0],
+                               [ 1, -4,  1],
+                               [ 0,  1,  0]], dtype=torch.float32)
+        
+        kernel = kernel.view(1, 1, 3, 3).repeat(channels, 1, 1, 1)
+        
+        self.register_buffer('laplacian_kernel', kernel)
 
-def loss_function(x_rec, x, qloss, lam_q=1.0):
+    def _laplacian_variance(self, x):
+        laplacian_edges = F.conv2d(x, self.laplacian_kernel, padding=1, groups=self.channels)
+        
+        mean_edges = torch.mean(laplacian_edges, dim=[2, 3], keepdim=True)
+        variance = torch.mean((laplacian_edges - mean_edges) ** 2, dim=[2, 3])
+        
+        # Average the variance across all channels
+        return torch.mean(variance, dim=1)
+
+    def forward(self, y_pred, y_true):
+        var_pred = self._laplacian_variance(y_pred)
+        var_true = self._laplacian_variance(y_true)
+        
+        loss = F.l1_loss(var_pred, var_true)
+        return loss
+
+def loss_function(x_rec, x, qloss, sharness_loss, lam_q=1.0, beta=0.1):
     """
     Returns (total_loss, recon_loss). Both are means (not sums); qloss from the
     quantiser is already codebook + beta * commitment. Log recon and qloss
     separately, and watch codebook perplexity/usage for codebook collapse
     (perplexity far below K, usage fraction near 0).
+
+    Now incorporates laplacian sharpness loss.
     """
     rec = F.l1_loss(x_rec, x)
-    return rec + lam_q * qloss, rec
+    sharp = sharness_loss(x_rec, x)
 
+    return rec + lam_q * qloss + beta * sharp, rec
 
 if __name__ == "__main__":
     print(f"Pytorch running on {device}")
