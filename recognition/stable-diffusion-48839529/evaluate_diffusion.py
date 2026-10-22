@@ -1,33 +1,49 @@
-"""Evaluate a Latent Diffusion Model (Stable Diffusion).
+"""Evaluate many Latent Diffusion Model UNet checkpoints against one VQ-VAE.
 
-Computes:
-1. **SSIM against Test Dataset** — Evaluates structural similarity of generated
-   synthetic samples compared with held-out real test images (mean nearest-neighbor
-   best-match SSIM and pairwise SSIM).
-2. **Meehan et al. Three-Sample Non-Parametric Test** — Tests whether the
-   diffusion model is merely copying / memorising training samples by comparing
-   nearest-neighbour distance distributions from generated samples to the training
-   set against test samples to the training set (Meehan et al., AISTATS 2020).
-3. **Visualisations & Metrics Persistence** — Generates diagnostic plots (distance
-   distributions, SSIM histograms, synthetic visual grid) and dumps all metrics
-   to JSON.
+For every UNet checkpoint found in --unet-ckpt-dir (sorted by the trailing
+number in the filename, i.e. by epoch), this script computes:
+
+1. **SSIM against Test Dataset** — best-match and mean pairwise SSIM between
+   generated samples and held-out real test images.
+2. **Meehan et al. Three-Sample Non-Parametric Test** — tests whether the model
+   copies training samples by comparing nearest-neighbour distances to the
+   training set for generated samples vs held-out test samples
+   (Meehan et al., AISTATS 2020).
+3. **Visualisations & Metrics Persistence** — per-checkpoint plots and JSON,
+   plus a cross-checkpoint summary (JSON, CSV and trend plot).
+
+Everything that does not depend on the UNet (test images, train/test features,
+test->train nearest-neighbour distances) is computed once and reused. Every
+checkpoint is sampled with the same seed, so all checkpoints start from the
+same initial noise and are directly comparable.
 
 Usage:
 ------
     python evaluate_diffusion.py \
-        --vqvae-ckpt   ./data/checkpoints/vqvae_epoch_50.pt \
-        --unet-ckpt    ./data/checkpoints/unet_epoch_100.pt \
+        --vqvae-ckpt     ./data/checkpoints/vqvae_epoch_50.pt \
+        --unet-ckpt-dir  ./data/checkpoints \
+        --unet-glob      "denoising_unet_epoch*.pt" \
         --train-data-dir ./keras_png_slices_data/keras_png_slices_train \
         --test-data-dir  ./keras_png_slices_data/keras_png_slices_test \
-        --num-samples  100 \
-        --output-dir   ./eval_diffusion_results
+        --num-samples    100 \
+        --output-dir     ./eval_diffusion_results
+
+Outputs:
+    <output-dir>/<checkpoint-stem>/   per-checkpoint plots + metrics JSON
+    <output-dir>/summary.json         metrics for all checkpoints
+    <output-dir>/summary.csv          same, as a table
+    <output-dir>/summary_trends.png   metrics vs epoch
 """
 
 from pathlib import Path
 import argparse
+import csv
+import gc
 import json
 import math
+import re
 import time
+import traceback
 
 import torch
 import torch.nn.functional as F
@@ -36,7 +52,40 @@ import matplotlib.pyplot as plt
 from torchvision.utils import make_grid, save_image
 
 from diffusion_model import StableDiffusion
-from dataset import get_dataloader, ImageFolderDataset
+from dataset import get_dataloader
+
+
+# Checkpoint discovery
+def parse_epoch(path):
+    """Return the last integer in the filename stem, or None if there is none."""
+    nums = re.findall(r"\d+", Path(path).stem)
+    return int(nums[-1]) if nums else None
+
+
+def checkpoint_sort_key(path):
+    epoch = parse_epoch(path)
+    return (epoch if epoch is not None else math.inf, Path(path).name)
+
+
+def find_unet_checkpoints(ckpt_dir, pattern, stride=1):
+    """Find UNet checkpoints in ckpt_dir matching a glob, sorted by epoch."""
+    ckpt_dir = Path(ckpt_dir)
+    if not ckpt_dir.is_dir():
+        raise FileNotFoundError(f"UNet checkpoint directory not found: {ckpt_dir}")
+
+    paths = sorted(ckpt_dir.glob(pattern), key=checkpoint_sort_key)
+    if not paths:
+        raise FileNotFoundError(
+            f"No files matching '{pattern}' in {ckpt_dir}. "
+            f"Use --unet-glob to match your checkpoint filenames."
+        )
+
+    if stride > 1:
+        selected = paths[::stride]
+        if selected[-1] != paths[-1]:  # always keep the final checkpoint
+            selected.append(paths[-1])
+        paths = selected
+    return paths
 
 
 # SSIM
@@ -81,7 +130,13 @@ def ssim_batch(x, y, window_size=11, sigma=1.5, C1=0.01 ** 2, C2=0.03 ** 2):
 
 # SSIM Evaluation: Generated Samples vs Test Dataset
 @torch.no_grad()
-def compute_ssim_against_test(gen_images, test_loader, device, chunk_size=32):
+def load_images(dataloader):
+    """Collect every batch of a dataloader into one (N, C, H, W) CPU tensor in [0, 1]."""
+    return torch.cat([batch.clamp(0, 1) for batch in dataloader], dim=0)
+
+
+@torch.no_grad()
+def compute_ssim_against_test(gen_images, test_images, device, chunk_size=32):
     """Compute SSIM metrics comparing generated samples against the test set.
 
     For each generated image, we find its best structural match (max SSIM)
@@ -91,34 +146,24 @@ def compute_ssim_against_test(gen_images, test_loader, device, chunk_size=32):
     ----------
     gen_images : torch.Tensor
         Generated images (M, C, H, W) in range [0, 1].
-    test_loader : DataLoader
-        DataLoader providing real test images in range [0, 1].
+    test_images : torch.Tensor
+        Real test images (N, C, H, W) in range [0, 1], preloaded once.
     device : torch.device
         Device for computation.
     chunk_size : int
-        Batch size of generated images processed at once to manage GPU memory.
+        Batch size of images processed at once to manage GPU memory.
 
-    Returns
-    -------
     dict
         SSIM statistics (mean, std, min, max best-match SSIM, and mean pairwise SSIM).
     """
-    print("Computing SSIM of generated images against test dataset …")
     gen_images = gen_images.clamp(0, 1)
     m = gen_images.size(0)
-
-    # Collect all test images into a single tensor on CPU or device
-    test_images_list = []
-    for batch in test_loader:
-        test_images_list.append(batch.clamp(0, 1))
-    test_images = torch.cat(test_images_list, dim=0)  # (N, C, H, W)
     n = test_images.size(0)
 
     best_ssim_per_gen = torch.full((m,), -1.0, dtype=torch.float32)
     best_match_idx = torch.zeros((m,), dtype=torch.long)
     total_pairwise_ssim = 0.0
 
-    # Compare in chunks over generated images and batches over test images
     for g_start in range(0, m, chunk_size):
         g_end = min(g_start + chunk_size, m)
         g_chunk = gen_images[g_start:g_end].to(device)  # (Bg, C, H, W)
@@ -132,8 +177,7 @@ def compute_ssim_against_test(gen_images, test_loader, device, chunk_size=32):
             t_chunk = test_images[t_start:t_end].to(device)  # (Bt, C, H, W)
             bt = t_chunk.size(0)
 
-            # Pairwise broadcast: repeat g_chunk and t_chunk to compute SSIM
-            # g_exp: (Bg * Bt, C, H, W)
+            # Pairwise broadcast -> (Bg * Bt, C, H, W)
             g_exp = g_chunk.repeat_interleave(bt, dim=0)
             t_exp = t_chunk.repeat(bg, 1, 1, 1)
 
@@ -148,18 +192,12 @@ def compute_ssim_against_test(gen_images, test_loader, device, chunk_size=32):
         best_ssim_per_gen[g_start:g_end] = chunk_best_ssim.cpu()
         best_match_idx[g_start:g_end] = chunk_best_idx.cpu()
 
-    mean_best = best_ssim_per_gen.mean().item()
-    std_best = best_ssim_per_gen.std().item()
-    min_best = best_ssim_per_gen.min().item()
-    max_best = best_ssim_per_gen.max().item()
-    mean_pairwise = total_pairwise_ssim / (m * n)
-
     return {
-        "best_match_ssim_mean": mean_best,
-        "best_match_ssim_std": std_best,
-        "best_match_ssim_min": min_best,
-        "best_match_ssim_max": max_best,
-        "mean_pairwise_ssim": mean_pairwise,
+        "best_match_ssim_mean": best_ssim_per_gen.mean().item(),
+        "best_match_ssim_std": best_ssim_per_gen.std().item(),
+        "best_match_ssim_min": best_ssim_per_gen.min().item(),
+        "best_match_ssim_max": best_ssim_per_gen.max().item(),
+        "mean_pairwise_ssim": total_pairwise_ssim / (m * n),
         "per_sample_best_ssim": best_ssim_per_gen.tolist(),
         "best_match_indices": best_match_idx.tolist(),
     }
@@ -184,8 +222,6 @@ def extract_representations(dataloader, model=None, space="latent", max_samples=
     device : torch.device
         Compute device.
 
-    Returns
-    -------
     torch.Tensor
         2D tensor (N, D) of extracted features.
     """
@@ -232,18 +268,14 @@ def compute_nearest_neighbor_distances(queries, targets, chunk_size=256, device=
     device : torch.device
         Device used for matrix distance calculations.
 
-    Returns
-    -------
     torch.Tensor
         1D tensor (Q,) of min Euclidean distances.
     """
     q_count = queries.size(0)
-    t_count = targets.size(0)
     min_distances = torch.zeros(q_count, dtype=torch.float32)
 
     targets_dev = targets.to(device)
-    # Target norms squared: (T,)
-    target_norms_sq = (targets_dev ** 2).sum(dim=1)
+    target_norms_sq = (targets_dev ** 2).sum(dim=1)  # (T,)
 
     for i in range(0, q_count, chunk_size):
         end = min(i + chunk_size, q_count)
@@ -260,13 +292,31 @@ def compute_nearest_neighbor_distances(queries, targets, chunk_size=256, device=
     return min_distances
 
 
+def _average_ranks(a):
+    """Ranks (1-based) of a 1-D array, with tied values given their average rank."""
+    order = np.argsort(a, kind="mergesort")
+    sorted_a = a[order]
+    ranks = np.empty(len(a), dtype=np.float64)
+    i = 0
+    while i < len(a):
+        j = i
+        while j + 1 < len(a) and sorted_a[j + 1] == sorted_a[i]:
+            j += 1
+        ranks[order[i:j + 1]] = (i + j) / 2.0 + 1.0
+        i = j + 1
+    return ranks
+
+
 def mann_whitney_u_test(x, y):
-    """Perform the two-sample Mann-Whitney U test between 1D arrays x and y.
+    """Two-sample Mann-Whitney U test between 1D arrays x and y.
 
-    Computes U statistic, standard normal Z-score, and p-values without
-    requiring external libraries, with exact tie handling.
+    Tests whether x is stochastically smaller than y (the data-copying
+    alternative when x = generated distances and y = test distances).
 
-    Tests whether x is stochastically smaller than y (data-copying alternative).
+    The U statistic and Z-score are always computed from ranks, for sample x,
+    so that their sign is well defined (the statistic scipy reports for the
+    two-sided test has changed between versions). scipy, if installed, is used
+    only for the p-values.
     """
     x = np.asarray(x, dtype=np.float64)
     y = np.asarray(y, dtype=np.float64)
@@ -276,67 +326,31 @@ def mann_whitney_u_test(x, y):
     if n == 0 or m == 0:
         raise ValueError("Inputs x and y must both be non-empty.")
 
-    # Try scipy.stats first if available for high-precision p-values
-    try:
-        from scipy import stats
-        res_two = stats.mannwhitneyu(x, y, alternative="two-sided")
-        res_less = stats.mannwhitneyu(x, y, alternative="less")
-
-        u_stat = res_two.statistic
-        mean_u = (n * m) / 2.0
-        std_u = math.sqrt((n * m * (n + m + 1)) / 12.0)
-        z_score = (u_stat - mean_u) / std_u if std_u > 0 else 0.0
-
-        return {
-            "u_statistic": float(u_stat),
-            "z_score": float(z_score),
-            "p_value_two_sided": float(res_two.pvalue),
-            "p_value_copying_one_sided": float(res_less.pvalue),
-            "n_x": n,
-            "n_y": m,
-        }
-    except ImportError:
-        pass
-
-    # Pure Python / NumPy implementation of Mann-Whitney U & Z-score
-    # Combine and rank
-    combined = np.concatenate([x, y])
-    order = np.argsort(combined)
-    ranks = np.empty_like(order, dtype=np.float64)
-    ranks[order] = np.arange(1, len(combined) + 1)
-
-    # Handle ties by assigning average rank
-    sorted_comb = combined[order]
-    unique_vals, inverse, counts = np.unique(sorted_comb, return_inverse=True, return_counts=True)
-    if len(unique_vals) < len(combined):
-        for val_idx, count in enumerate(counts):
-            if count > 1:
-                match_indices = np.where(sorted_comb == unique_vals[val_idx])[0]
-                avg_rank = (match_indices + 1).mean()
-                ranks[order[match_indices]] = avg_rank
-
-    r_x = np.sum(ranks[:n])
-    u_x = r_x - (n * (n + 1)) / 2.0
+    ranks = _average_ranks(np.concatenate([x, y]))
+    u_x = ranks[:n].sum() - n * (n + 1) / 2.0
     mean_u = (n * m) / 2.0
     std_u = math.sqrt((n * m * (n + m + 1)) / 12.0)
-
     z_score = (u_x - mean_u) / std_u if std_u > 0 else 0.0
 
-    # Normal CDF using erf
-    p_less = 0.5 * (1.0 + math.erf(z_score / math.sqrt(2.0)))
-    p_two = 2.0 * min(p_less, 1.0 - p_less)
+    try:
+        from scipy import stats
+        p_two = float(stats.mannwhitneyu(x, y, alternative="two-sided").pvalue)
+        p_less = float(stats.mannwhitneyu(x, y, alternative="less").pvalue)
+    except ImportError:
+        p_less = 0.5 * (1.0 + math.erf(z_score / math.sqrt(2.0)))
+        p_two = 2.0 * min(p_less, 1.0 - p_less)
 
     return {
         "u_statistic": float(u_x),
         "z_score": float(z_score),
-        "p_value_two_sided": float(p_two),
-        "p_value_copying_one_sided": float(p_less),
+        "p_value_two_sided": p_two,
+        "p_value_copying_one_sided": p_less,
         "n_x": n,
         "n_y": m,
     }
 
 
-def meehan_three_sample_test(train_feats, test_feats, gen_feats, device="cpu"):
+def meehan_three_sample_test(train_feats, test_feats, gen_feats, device="cpu", d_test=None):
     """Execute the Meehan et al. Three-Sample Non-Parametric Test for Data-Copying.
 
     Datasets:
@@ -350,15 +364,15 @@ def meehan_three_sample_test(train_feats, test_feats, gen_feats, device="cpu"):
       - H1: Q is data-copying (generated points are systematically closer to T
             than real test points are).
 
-    Returns
-    -------
+    d_test : torch.Tensor, optional
+        Precomputed test->train nearest-neighbour distances. Does not depend on
+        the UNet, so it is computed once and reused across checkpoints.
+
     dict
         Distance metrics, U-statistic, Z_U score, p-values, and verbal interpretation.
     """
-    print("\nComputing nearest-neighbor distances to training set (Meehan et al. Test) …")
-
-    # distances
-    d_test = compute_nearest_neighbor_distances(test_feats, train_feats, device=device)
+    if d_test is None:
+        d_test = compute_nearest_neighbor_distances(test_feats, train_feats, device=device)
     d_gen = compute_nearest_neighbor_distances(gen_feats, train_feats, device=device)
 
     d_test_np = d_test.numpy()
@@ -371,7 +385,6 @@ def meehan_three_sample_test(train_feats, test_feats, gen_feats, device="cpu"):
     p_two = test_res["p_value_two_sided"]
     p_copy = test_res["p_value_copying_one_sided"]
 
-    # Interpretation
     # Z_U < -1.96 means generated distances are significantly smaller than test distances
     if z_u < -1.96 and p_copy < 0.05:
         verdict = (
@@ -410,8 +423,9 @@ def meehan_three_sample_test(train_feats, test_feats, gen_feats, device="cpu"):
         "dist_gen_to_train": d_gen_np.tolist(),
     }
 
+
 # Visualisation & Reporting
-def plot_evaluation(ssim_res, meehan_res, gen_images, output_dir):
+def plot_evaluation(ssim_res, meehan_res, gen_images, output_dir, title_prefix=""):
     """Generate diagnostic figures for SSIM and the Meehan Three-Sample test."""
     output_dir = Path(output_dir)
 
@@ -428,11 +442,11 @@ def plot_evaluation(ssim_res, meehan_res, gen_images, output_dir):
     ax1.axvline(d_gen.mean(), color="darkred", linestyle="--", label=f"Mean Gen ({d_gen.mean():.2f})")
     ax1.set_xlabel("Nearest-Neighbor Distance to Training Set")
     ax1.set_ylabel("Density")
-    ax1.set_title(f"Meehan et al. Distance Distributions\n$Z_U = {meehan_res['z_u_score']:.3f}$ ({meehan_res['status']})")
+    ax1.set_title(f"{title_prefix}Meehan et al. Distance Distributions\n"
+                  f"$Z_U = {meehan_res['z_u_score']:.3f}$ ({meehan_res['status']})")
     ax1.legend(fontsize=9)
     ax1.grid(True, alpha=0.3)
 
-    # Boxplot comparison
     ax2.boxplot([d_test, d_gen], tick_labels=["Test → Train", "Synthetic → Train"], patch_artist=True,
                 boxprops=dict(facecolor="lightblue", color="blue"),
                 medianprops=dict(color="black", linewidth=1.5))
@@ -441,10 +455,8 @@ def plot_evaluation(ssim_res, meehan_res, gen_images, output_dir):
     ax2.grid(True, alpha=0.3)
 
     fig.tight_layout()
-    fig_path = output_dir / "meehan_three_sample_test.png"
-    fig.savefig(fig_path, dpi=150)
+    fig.savefig(output_dir / "meehan_three_sample_test.png", dpi=150)
     plt.close(fig)
-    print(f"Saved distance distribution plot → {fig_path}")
 
     # SSIM Distribution Plot
     best_ssims = np.array(ssim_res["per_sample_best_ssim"])
@@ -454,35 +466,239 @@ def plot_evaluation(ssim_res, meehan_res, gen_images, output_dir):
                label=f"Mean Best SSIM: {ssim_res['best_match_ssim_mean']:.4f}")
     ax.set_xlabel("Best-Match SSIM against Test Set")
     ax.set_ylabel("Count of Generated Images")
-    ax.set_title("Synthetic Image SSIM against Test Dataset")
+    ax.set_title(f"{title_prefix}Synthetic Image SSIM against Test Dataset")
     ax.legend()
     ax.grid(True, alpha=0.3)
 
     fig.tight_layout()
-    ssim_fig_path = output_dir / "ssim_distribution.png"
-    fig.savefig(ssim_fig_path, dpi=150)
+    fig.savefig(output_dir / "ssim_distribution.png", dpi=150)
     plt.close(fig)
-    print(f"Saved SSIM distribution plot → {ssim_fig_path}")
 
-    # 3. Grid of Generated Samples
+    # Grid of Generated Samples
     n_display = min(16, gen_images.size(0))
     grid = make_grid(gen_images[:n_display].clamp(0, 1), nrow=4, padding=4, normalize=False)
-    grid_path = output_dir / "generated_samples_grid.png"
-    save_image(grid, grid_path)
-    print(f"Saved generated sample grid → {grid_path}")
+    save_image(grid, output_dir / "generated_samples_grid.png")
+
+
+SUMMARY_FIELDS = [
+    "checkpoint", "epoch",
+    "best_match_ssim_mean", "best_match_ssim_std", "mean_pairwise_ssim",
+    "z_u_score", "p_value_copying_one_sided", "status",
+    "mean_dist_gen_to_train", "mean_dist_test_to_train",
+    "generation_seconds", "error",
+]
+
+
+def write_summary(records, output_dir):
+    """Write summary JSON, CSV and trend plot for all checkpoints evaluated so far."""
+    output_dir = Path(output_dir)
+
+    with open(output_dir / "summary.json", "w") as f:
+        json.dump(records, f, indent=2)
+
+    with open(output_dir / "summary.csv", "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=SUMMARY_FIELDS, extrasaction="ignore", restval="")
+        writer.writeheader()
+        writer.writerows(records)
+
+    ok = [r for r in records if "error" not in r]
+    if len(ok) < 2:
+        return
+
+    if all(r["epoch"] is not None for r in ok):
+        x, xlabel = [r["epoch"] for r in ok], "Checkpoint epoch"
+    else:
+        x, xlabel = list(range(len(ok))), "Checkpoint index"
+
+    fig, ax = plt.subplots(2, 2, figsize=(13, 9))
+
+    ax[0, 0].plot(x, [r["best_match_ssim_mean"] for r in ok], marker="o")
+    ax[0, 0].set_title("Mean Best-Match SSIM vs Test Set")
+    ax[0, 0].set_ylabel("SSIM")
+
+    ax[0, 1].plot(x, [r["mean_pairwise_ssim"] for r in ok], marker="o", color="darkorange")
+    ax[0, 1].set_title("Mean Pairwise SSIM vs Test Set")
+    ax[0, 1].set_ylabel("SSIM")
+
+    ax[1, 0].plot(x, [r["z_u_score"] for r in ok], marker="o", color="crimson")
+    ax[1, 0].axhline(-1.96, color="gray", linestyle="--", label="±1.96")
+    ax[1, 0].axhline(1.96, color="gray", linestyle="--")
+    ax[1, 0].axhline(0, color="black", linewidth=0.8)
+    ax[1, 0].set_title("Meehan $Z_U$ (negative = copying)")
+    ax[1, 0].set_ylabel("$Z_U$")
+    ax[1, 0].legend()
+
+    ax[1, 1].plot(x, [r["mean_dist_gen_to_train"] for r in ok], marker="o", color="green",
+                  label="Synthetic → Train")
+    ax[1, 1].axhline(ok[0]["mean_dist_test_to_train"], color="royalblue", linestyle="--",
+                     label="Test → Train")
+    ax[1, 1].set_title("Mean Nearest-Neighbor Distance to Train")
+    ax[1, 1].set_ylabel("Distance")
+    ax[1, 1].legend()
+
+    for a in ax.flat:
+        a.set_xlabel(xlabel)
+        a.grid(True, alpha=0.3)
+
+    fig.tight_layout()
+    fig.savefig(output_dir / "summary_trends.png", dpi=150)
+    plt.close(fig)
+
+
+# Per-checkpoint evaluation
+def ensure_reference_cache(cache, model, train_loader, test_loader, args, device):
+    """Compute everything that is independent of the UNet, once.
+
+    Needs a loaded model only because latent-space features go through the
+    (shared) VQ-VAE encoder.
+    """
+    if "test_images" not in cache:
+        print("Loading test images for SSIM …")
+        cache["test_images"] = load_images(test_loader)
+
+    if "d_test" not in cache:
+        print("Extracting training representations …")
+        cache["train_feats"] = extract_representations(
+            train_loader, model, args.metric_space, args.max_train_samples, device)
+        print("Extracting test representations …")
+        cache["test_feats"] = extract_representations(
+            test_loader, model, args.metric_space, args.max_test_samples, device)
+        print("Computing test → train nearest-neighbor distances …")
+        cache["d_test"] = compute_nearest_neighbor_distances(
+            cache["test_feats"], cache["train_feats"], device=device)
+
+
+def evaluate_checkpoint(unet_ckpt, args, device, train_loader, test_loader, cache):
+    """Generate samples from one UNet checkpoint and compute all metrics."""
+    label = unet_ckpt.stem
+    out_dir = args.output_dir / label
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    model = StableDiffusion.from_checkpoints(
+        vqvae_ckpt=args.vqvae_ckpt,
+        unet_ckpt=unet_ckpt,
+        image_size=args.image_size,
+        device=device,
+        train_vqvae=False,
+        train_unet=False,
+    )
+
+    try:
+        ensure_reference_cache(cache, model, train_loader, test_loader, args, device)
+
+        # Generate (same seed for every checkpoint)
+        print(f"Generating {args.num_samples} samples (DDIM steps={args.ddim_steps}) …")
+        start = time.perf_counter()
+        gen_images = model.sample(
+            n=args.num_samples,
+            ddim_steps=args.ddim_steps,
+            batch_size=args.sample_batch_size,
+            seed=args.seed,
+        )
+        gen_elapsed = time.perf_counter() - start
+        gen_images = gen_images.clamp(0, 1).cpu()
+        print(f"  done in {gen_elapsed:.1f}s ({args.num_samples / gen_elapsed:.2f} img/s)")
+
+        if args.save_all_samples:
+            samples_dir = out_dir / "samples"
+            samples_dir.mkdir(exist_ok=True)
+            for idx in range(gen_images.size(0)):
+                save_image(gen_images[idx], samples_dir / f"sample_{idx:05d}.png")
+
+        # Evaluation 1: SSIM
+        ssim_results = compute_ssim_against_test(gen_images, cache["test_images"], device)
+        print(f"  best-match SSIM: {ssim_results['best_match_ssim_mean']:.4f} "
+              f"± {ssim_results['best_match_ssim_std']:.4f} | "
+              f"pairwise: {ssim_results['mean_pairwise_ssim']:.4f}")
+
+        # Evaluation 2: Meehan test
+        if args.metric_space == "latent":
+            with torch.no_grad():
+                gen_feats = torch.cat([
+                    model.encode(gen_images[i:i + args.batch_size].to(device)).flatten(start_dim=1).cpu()
+                    for i in range(0, gen_images.size(0), args.batch_size)
+                ], dim=0)
+        else:
+            gen_feats = gen_images.flatten(start_dim=1)
+
+        meehan_results = meehan_three_sample_test(
+            train_feats=cache["train_feats"],
+            test_feats=cache["test_feats"],
+            gen_feats=gen_feats,
+            device=device,
+            d_test=cache["d_test"],
+        )
+        print(f"  Z_U: {meehan_results['z_u_score']:+.3f} "
+              f"(p_copy={meehan_results['p_value_copying_one_sided']:.3e}) "
+              f"→ {meehan_results['status']}")
+
+        # Persist
+        plot_evaluation(ssim_results, meehan_results, gen_images, out_dir, title_prefix=f"{label}\n")
+
+        record = {
+            "checkpoint": label,
+            "epoch": parse_epoch(unet_ckpt),
+            "path": str(unet_ckpt),
+            "generation_seconds": gen_elapsed,
+            "best_match_ssim_mean": ssim_results["best_match_ssim_mean"],
+            "best_match_ssim_std": ssim_results["best_match_ssim_std"],
+            "best_match_ssim_min": ssim_results["best_match_ssim_min"],
+            "best_match_ssim_max": ssim_results["best_match_ssim_max"],
+            "mean_pairwise_ssim": ssim_results["mean_pairwise_ssim"],
+            "status": meehan_results["status"],
+            "verdict": meehan_results["verdict"],
+            "z_u_score": meehan_results["z_u_score"],
+            "u_statistic": meehan_results["u_statistic"],
+            "p_value_two_sided": meehan_results["p_value_two_sided"],
+            "p_value_copying_one_sided": meehan_results["p_value_copying_one_sided"],
+            "train_set_size": meehan_results["train_set_size"],
+            "test_set_size": meehan_results["test_set_size"],
+            "gen_set_size": meehan_results["gen_set_size"],
+            "mean_dist_test_to_train": meehan_results["mean_dist_test_to_train"],
+            "std_dist_test_to_train": meehan_results["std_dist_test_to_train"],
+            "mean_dist_gen_to_train": meehan_results["mean_dist_gen_to_train"],
+            "std_dist_gen_to_train": meehan_results["std_dist_gen_to_train"],
+        }
+
+        with open(out_dir / "diffusion_eval_metrics.json", "w") as f:
+            json.dump({
+                "config": {
+                    "vqvae_ckpt": str(args.vqvae_ckpt),
+                    "unet_ckpt": str(unet_ckpt),
+                    "num_samples": args.num_samples,
+                    "ddim_steps": args.ddim_steps,
+                    "metric_space": args.metric_space,
+                    "seed": args.seed,
+                },
+                "metrics": record,
+            }, f, indent=2)
+
+        return record
+
+    finally:
+        del model
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 
 # CLI & Execution
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Evaluate Latent Diffusion Model (SSIM & Meehan et al. Data-Copying Test).",
+        description="Evaluate many UNet checkpoints of a Latent Diffusion Model "
+                    "(SSIM & Meehan et al. Data-Copying Test) for one VQ-VAE.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     # Checkpoints
     parser.add_argument("--vqvae-ckpt", type=Path, required=True,
-                        help="Path to trained VQ-VAE checkpoint (.pt)")
-    parser.add_argument("--unet-ckpt", type=Path, required=True,
-                        help="Path to trained UNet diffusion checkpoint (.pt)")
+                        help="Path to the (single, shared) trained VQ-VAE checkpoint (.pt)")
+    parser.add_argument("--unet-ckpt-dir", type=Path, required=True,
+                        help="Directory containing UNet diffusion checkpoints (.pt)")
+    parser.add_argument("--unet-glob", type=str, default="*unet*.pt",
+                        help="Glob (relative to --unet-ckpt-dir) selecting UNet checkpoints. "
+                             "Files are evaluated in order of the trailing number in their name.")
+    parser.add_argument("--stride", type=int, default=1,
+                        help="Evaluate every k-th checkpoint (the last one is always included)")
 
     # Data directories
     parser.add_argument("--train-data-dir", type=Path, default=None,
@@ -494,13 +710,13 @@ def parse_args():
 
     # Generation parameters
     parser.add_argument("--num-samples", type=int, default=100,
-                        help="Arbitrary number of synthetic samples to generate")
+                        help="Number of synthetic samples to generate per checkpoint")
     parser.add_argument("--sample-batch-size", type=int, default=16,
                         help="Batch size during diffusion generation")
     parser.add_argument("--ddim-steps", type=int, default=50,
                         help="Number of DDIM steps used for sampling")
     parser.add_argument("--seed", type=int, default=42,
-                        help="Random seed for generation reproducibility")
+                        help="Random seed; identical for every checkpoint so initial noise matches")
 
     # Evaluation configuration
     parser.add_argument("--image-size", type=int, default=256,
@@ -517,7 +733,7 @@ def parse_args():
     parser.add_argument("--output-dir", type=Path, default=Path("./eval_diffusion_results"),
                         help="Directory for saving metrics and diagnostic plots")
     parser.add_argument("--save-all-samples", action="store_true",
-                        help="Save all individual generated synthetic images as PNGs")
+                        help="Save all individual generated images as PNGs (per checkpoint)")
 
     return parser.parse_args()
 
@@ -551,180 +767,48 @@ def main():
     args.output_dir.mkdir(parents=True, exist_ok=True)
     train_dir, test_dir = resolve_data_dirs(args)
 
-    print(f"Loading StableDiffusion from checkpoints:")
-    print(f"  VQ-VAE: {args.vqvae_ckpt}")
-    print(f"  UNet:   {args.unet_ckpt}")
+    unet_ckpts = find_unet_checkpoints(args.unet_ckpt_dir, args.unet_glob, args.stride)
+    print(f"VQ-VAE: {args.vqvae_ckpt}")
+    print(f"Found {len(unet_ckpts)} UNet checkpoint(s) in {args.unet_ckpt_dir}:")
+    for p in unet_ckpts:
+        print(f"  {p.name}")
 
-    model = StableDiffusion.from_checkpoints(
-        vqvae_ckpt=args.vqvae_ckpt,
-        unet_ckpt=args.unet_ckpt,
-        image_size=args.image_size,
-        device=device,
-        train_vqvae=False,
-        train_unet=False,
-    )
-
-    # Generating Synthetic Dataset
-    print(f"\nGenerating {args.num_samples} synthetic images (DDIM steps={args.ddim_steps}) …")
-    start_gen = time.perf_counter()
-    gen_images = model.sample(
-        n=args.num_samples,
-        ddim_steps=args.ddim_steps,
-        batch_size=args.sample_batch_size,
-        seed=args.seed,
-    )
-    gen_elapsed = time.perf_counter() - start_gen
-    gen_images = gen_images.clamp(0, 1)
-    print(f"Generation completed in {gen_elapsed:.2f}s ({args.num_samples / gen_elapsed:.2f} images/s)")
-
-    # Optionally save individual images
-    if args.save_all_samples:
-        samples_dir = args.output_dir / "samples"
-        samples_dir.mkdir(exist_ok=True)
-        for idx in range(gen_images.size(0)):
-            save_image(gen_images[idx], samples_dir / f"sample_{idx:05d}.png")
-        print(f"Saved {gen_images.size(0)} individual images to {samples_dir}")
-
-    # 2. Prepare Dataloaders for Train and Test sets
-    print(f"\nLoading real datasets:")
-    print(f"  Train directory: {train_dir}")
-    print(f"  Test directory:  {test_dir}")
-
+    # Dataloaders (shared across checkpoints)
     train_loader = get_dataloader(
-        str(train_dir),
-        image_size=args.image_size,
-        batch_size=args.batch_size,
-        shuffle=False,
-    )
+        str(train_dir), image_size=args.image_size, batch_size=args.batch_size, shuffle=False)
     test_loader = get_dataloader(
-        str(test_dir),
-        image_size=args.image_size,
-        batch_size=args.batch_size,
-        shuffle=False,
-    )
+        str(test_dir), image_size=args.image_size, batch_size=args.batch_size, shuffle=False)
+    print(f"Training images: {len(train_loader.dataset)} | Testing images: {len(test_loader.dataset)}")
 
-    print(f"  Training images: {len(train_loader.dataset)}")
-    print(f"  Testing images:  {len(test_loader.dataset)}")
+    cache = {}     # UNet-independent reference data, filled on first successful load
+    records = []
 
-    # Compute SSIM against Test Dataset
-    print(f"\n{'─' * 60}")
-    print("EVALUATION 1: SSIM AGAINST TEST DATASET")
-    print(f"{'─' * 60}")
-    ssim_results = compute_ssim_against_test(
-        gen_images=gen_images,
-        test_loader=test_loader,
-        device=device,
-    )
+    for i, ckpt in enumerate(unet_ckpts, start=1):
+        print(f"\n{'═' * 66}")
+        print(f"[{i}/{len(unet_ckpts)}] {ckpt.name}")
+        print(f"{'═' * 66}")
+        try:
+            records.append(evaluate_checkpoint(ckpt, args, device, train_loader, test_loader, cache))
+        except Exception as exc:  # keep going if one checkpoint is bad
+            traceback.print_exc()
+            records.append({"checkpoint": ckpt.stem, "epoch": parse_epoch(ckpt), "error": repr(exc)})
 
-    print(f"Mean Best-Match SSIM: {ssim_results['best_match_ssim_mean']:.4f} ± {ssim_results['best_match_ssim_std']:.4f}")
-    print(f"Min Best SSIM:        {ssim_results['best_match_ssim_min']:.4f}")
-    print(f"Max Best SSIM:        {ssim_results['best_match_ssim_max']:.4f}")
-    print(f"Mean Pairwise SSIM:   {ssim_results['mean_pairwise_ssim']:.4f}")
+        write_summary(records, args.output_dir)  # persist progress after every checkpoint
 
-    # Extract Representations for Meehan et al. Three-Sample Test
-    print(f"\n{'─' * 60}")
-    print(f"EVALUATION 2: MEEHAN ET AL. THREE-SAMPLE DATA-COPYING TEST ({args.metric_space.upper()} SPACE)")
-    print(f"{'─' * 60}")
-
-    print("Extracting training representations …")
-    train_feats = extract_representations(
-        dataloader=train_loader,
-        model=model,
-        space=args.metric_space,
-        max_samples=args.max_train_samples,
-        device=device,
-    )
-
-    print("Extracting test representations …")
-    test_feats = extract_representations(
-        dataloader=test_loader,
-        model=model,
-        space=args.metric_space,
-        max_samples=args.max_test_samples,
-        device=device,
-    )
-
-    print("Extracting synthetic representations …")
-    if args.metric_space == "latent":
-        gen_feats_list = []
-        for i in range(0, gen_images.size(0), args.batch_size):
-            batch = gen_images[i:i + args.batch_size].to(device)
-            gen_feats_list.append(model.encode(batch).flatten(start_dim=1).cpu())
-        gen_feats = torch.cat(gen_feats_list, dim=0)
-    else:
-        gen_feats = gen_images.flatten(start_dim=1)
-
-    meehan_results = meehan_three_sample_test(
-        train_feats=train_feats,
-        test_feats=test_feats,
-        gen_feats=gen_feats,
-        device=device,
-    )
-
-    print(f"\nResults:")
-    print(f"  Test → Train mean dist: {meehan_results['mean_dist_test_to_train']:.4f} ± {meehan_results['std_dist_test_to_train']:.4f}")
-    print(f"  Gen  → Train mean dist: {meehan_results['mean_dist_gen_to_train']:.4f} ± {meehan_results['std_dist_gen_to_train']:.4f}")
-    print(f"  Mann-Whitney U statistic: {meehan_results['u_statistic']:.1f}")
-    print(f"  Meehan Z_U test statistic: {meehan_results['z_u_score']:+.4f}")
-    print(f"  Two-sided p-value:         {meehan_results['p_value_two_sided']:.4e}")
-    print(f"  Data-copying p-value:      {meehan_results['p_value_copying_one_sided']:.4e}")
-    print(f"\nVERDICT: {meehan_results['verdict']}")
-
-    # Save Plots & Full Results
-    plot_evaluation(ssim_results, meehan_results, gen_images, args.output_dir)
-
-    metrics_dump = {
-        "config": {
-            "vqvae_ckpt": str(args.vqvae_ckpt),
-            "unet_ckpt": str(args.unet_ckpt),
-            "num_samples": args.num_samples,
-            "ddim_steps": args.ddim_steps,
-            "metric_space": args.metric_space,
-            "seed": args.seed,
-            "generation_runtime_seconds": gen_elapsed,
-            "images_per_second": args.num_samples / gen_elapsed,
-        },
-        "ssim_metrics": {
-            "best_match_ssim_mean": ssim_results["best_match_ssim_mean"],
-            "best_match_ssim_std": ssim_results["best_match_ssim_std"],
-            "best_match_ssim_min": ssim_results["best_match_ssim_min"],
-            "best_match_ssim_max": ssim_results["best_match_ssim_max"],
-            "mean_pairwise_ssim": ssim_results["mean_pairwise_ssim"],
-        },
-        "meehan_three_sample_test": {
-            "status": meehan_results["status"],
-            "verdict": meehan_results["verdict"],
-            "z_u_score": meehan_results["z_u_score"],
-            "u_statistic": meehan_results["u_statistic"],
-            "p_value_two_sided": meehan_results["p_value_two_sided"],
-            "p_value_copying_one_sided": meehan_results["p_value_copying_one_sided"],
-            "train_set_size": meehan_results["train_set_size"],
-            "test_set_size": meehan_results["test_set_size"],
-            "gen_set_size": meehan_results["gen_set_size"],
-            "mean_dist_test_to_train": meehan_results["mean_dist_test_to_train"],
-            "std_dist_test_to_train": meehan_results["std_dist_test_to_train"],
-            "mean_dist_gen_to_train": meehan_results["mean_dist_gen_to_train"],
-            "std_dist_gen_to_train": meehan_results["std_dist_gen_to_train"],
-        },
-    }
-
-    json_path = args.output_dir / "diffusion_eval_metrics.json"
-    with open(json_path, "w") as f:
-        json.dump(metrics_dump, f, indent=2)
-    print(f"\nPersisted metrics JSON → {json_path}")
-
-    # Summary table
-    print(f"\n{'═' * 66}")
-    print(f"{'EVALUATION SUMMARY':^66}")
-    print(f"{'═' * 66}")
-    print(f"  Generated Images:            {args.num_samples}")
-    print(f"  Sampling Speed:              {args.num_samples / gen_elapsed:.1f} img/s")
-    print(f"  Mean Best-Match SSIM:        {ssim_results['best_match_ssim_mean']:.4f}")
-    print(f"  Mean Pairwise SSIM:          {ssim_results['mean_pairwise_ssim']:.4f}")
-    print(f"  Meehan Z_U Score:            {meehan_results['z_u_score']:+.4f}")
-    print(f"  Copying p-value:             {meehan_results['p_value_copying_one_sided']:.4e}")
-    print(f"  Assessment:                  {meehan_results['status'].upper()}")
-    print(f"{'═' * 66}\n")
+    # Final summary table
+    print(f"\n{'═' * 78}")
+    print(f"{'EVALUATION SUMMARY':^78}")
+    print(f"{'═' * 78}")
+    print(f"{'checkpoint':<32}{'epoch':>6}{'best SSIM':>11}{'pair SSIM':>11}{'Z_U':>9}  status")
+    for r in records:
+        epoch = "-" if r["epoch"] is None else str(r["epoch"])
+        if "error" in r:
+            print(f"{r['checkpoint']:<32}{epoch:>6}  FAILED: {r['error'][:40]}")
+        else:
+            print(f"{r['checkpoint']:<32}{epoch:>6}{r['best_match_ssim_mean']:>11.4f}"
+                  f"{r['mean_pairwise_ssim']:>11.4f}{r['z_u_score']:>+9.2f}  {r['status']}")
+    print(f"{'═' * 78}")
+    print(f"Results written to {args.output_dir}\n")
 
 
 if __name__ == "__main__":
