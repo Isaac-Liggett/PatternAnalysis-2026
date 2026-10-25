@@ -180,6 +180,8 @@ if __name__ == "__main__":
     n_samples = len(dataloader.dataset)
     recon_losses, q_losses, perplexities, usages = [], [], [], []
 
+    sharp_loss = LaplacianVarianceLoss(1)
+
     for epoch in tqdm(range(1, args.epochs + 1), desc="EPOCH"):
         model.train()
         epoch_recon, epoch_q = 0.0, 0.0
@@ -189,7 +191,7 @@ if __name__ == "__main__":
             data = data.to(device)  # expects [N, C, H, W]
 
             x_rec, qloss, idx = model(data)
-            loss, rec = loss_function(x_rec, data, qloss, args.lam_q)
+            loss, rec = loss_function(x_rec, data, qloss, sharp_loss, lam_q=args.lam_q)
 
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
