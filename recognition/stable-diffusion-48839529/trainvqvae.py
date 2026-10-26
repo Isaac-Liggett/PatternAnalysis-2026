@@ -32,7 +32,7 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=LR)
     parser.add_argument("--image-size", type=int, default=IMAGE_SIZE)
     parser.add_argument("--ch", type=int, default=CH)
-    parser.add_argument("--in-ch", type=float, default=IN_CHANNELS)
+    parser.add_argument("--in-ch", type=int, default=IN_CHANNELS)
     parser.add_argument("--n-embed", type=int, default=N_EMBED)
     parser.add_argument("--embed-dim", type=int, default=EMBED_DIM)
     parser.add_argument("--beta", type=float, default=BETA,
@@ -133,7 +133,7 @@ class LaplacianVarianceLoss(nn.Module):
         loss = F.l1_loss(var_pred, var_true)
         return loss
 
-def loss_function(x_rec, x, qloss, sharness_loss, lam_q=1.0, beta=0.1):
+def loss_function(x_rec, x, qloss, sharness_loss, lam_q=1.0, lam_sharp=0.1):
     """
     Returns (total_loss, recon_loss). Both are means (not sums); qloss from the
     quantiser is already codebook + beta * commitment. Log recon and qloss
@@ -145,7 +145,7 @@ def loss_function(x_rec, x, qloss, sharness_loss, lam_q=1.0, beta=0.1):
     rec = F.l1_loss(x_rec, x)
     sharp = sharness_loss(x_rec, x)
 
-    return rec + lam_q * qloss + beta * sharp, rec
+    return rec + lam_q * qloss + lam_sharp * sharp, rec
 
 if __name__ == "__main__":
     print(f"Pytorch running on {device}")
@@ -180,7 +180,7 @@ if __name__ == "__main__":
     n_samples = len(dataloader.dataset)
     recon_losses, q_losses, perplexities, usages = [], [], [], []
 
-    sharp_loss = LaplacianVarianceLoss(1)
+    sharp_loss = LaplacianVarianceLoss(1).to(device)
 
     for epoch in tqdm(range(1, args.epochs + 1), desc="EPOCH"):
         model.train()
