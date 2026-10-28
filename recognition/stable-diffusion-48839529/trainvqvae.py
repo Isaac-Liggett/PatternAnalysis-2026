@@ -22,6 +22,7 @@ N_EMBED = 1024     # codebook size K; my choice for a small single-channel datas
 EMBED_DIM = 3      # latent channels / codebook vector dimension
 BETA = 0.25        # commitment weight (VQ-VAE paper), NOT a KL weight
 LAM_Q = 1.0        # weight on the whole quantiser loss (codebook + commitment)
+LAM_SHARP = 0.01   # weight on laplacian sharpness loss
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -38,6 +39,8 @@ def parse_args():
     parser.add_argument("--beta", type=float, default=BETA,
                         help="Commitment loss weight")
     parser.add_argument("--lam-q", type=float, default=LAM_Q)
+    parser.add_argument("--lam-sharp", type=float, default=LAM_SHARP,
+                        help="Weight on laplacian sharpness loss")
     parser.add_argument(
         "--reset-dead", action="store_true",
         help="At each epoch end, re-initialise codes never used that epoch",
@@ -75,8 +78,8 @@ def load_checkpoint(path, model, optimizer, device):
     return checkpoint["epoch"], checkpoint["loss"]
 
 
-def plot_curves(recon_losses, q_losses, perplexities, usages, save_path):
-    fig, ax = plt.subplots(2, 2, figsize=(12, 9))
+def plot_curves(recon_losses, q_losses, total_losses, perplexities, usages, save_path):
+    fig, ax = plt.subplots(2, 3, figsize=(18, 9))
     epochs = range(1, len(recon_losses) + 1)
 
     ax[0, 0].plot(epochs, recon_losses, marker="o")
@@ -87,6 +90,10 @@ def plot_curves(recon_losses, q_losses, perplexities, usages, save_path):
     ax[0, 1].set_ylabel("Avg quantiser loss (codebook + commitment)")
     ax[0, 1].set_title("Quantiser Loss")
 
+    ax[0, 2].plot(epochs, total_losses, marker="o", color="crimson")
+    ax[0, 2].set_ylabel("Avg total loss (per sample)")
+    ax[0, 2].set_title("Total Loss")
+
     ax[1, 0].plot(epochs, perplexities, marker="o", color="green")
     ax[1, 0].set_ylabel("Codebook perplexity (epoch)")
     ax[1, 0].set_title("Codebook Perplexity")
@@ -95,6 +102,8 @@ def plot_curves(recon_losses, q_losses, perplexities, usages, save_path):
     ax[1, 1].set_ylabel("Fraction of codes used (epoch)")
     ax[1, 1].set_ylim(0, 1.05)
     ax[1, 1].set_title("Codebook Usage")
+
+    ax[1, 2].axis("off")  # unused subplot
 
     for a in ax.flat:
         a.set_xlabel("Epoch")
@@ -133,19 +142,20 @@ class LaplacianVarianceLoss(nn.Module):
         loss = F.l1_loss(var_pred, var_true)
         return loss
 
-def loss_function(x_rec, x, qloss, sharness_loss, lam_q=1.0, lam_sharp=0.1):
+def loss_function(x_rec, x, qloss, sharness_loss, lam_q=1.0, lam_sharp=0.01):
     """
-    Returns (total_loss, recon_loss). Both are means (not sums); qloss from the
-    quantiser is already codebook + beta * commitment. Log recon and qloss
-    separately, and watch codebook perplexity/usage for codebook collapse
-    (perplexity far below K, usage fraction near 0).
+    Returns (total_loss, recon_loss, sharp_loss). Both are means (not sums);
+    qloss from the quantiser is already codebook + beta * commitment. Log recon
+    and qloss separately, and watch codebook perplexity/usage for codebook
+    collapse (perplexity far below K, usage fraction near 0).
 
     Now incorporates laplacian sharpness loss.
     """
     rec = F.l1_loss(x_rec, x)
     sharp = sharness_loss(x_rec, x)
+    total = rec + lam_q * qloss + lam_sharp * sharp
 
-    return rec + lam_q * qloss + lam_sharp * sharp, rec
+    return total, rec, sharp
 
 if __name__ == "__main__":
     print(f"Pytorch running on {device}")
@@ -178,20 +188,21 @@ if __name__ == "__main__":
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, betas=(0.5, 0.9))
 
     n_samples = len(dataloader.dataset)
-    recon_losses, q_losses, perplexities, usages = [], [], [], []
+    recon_losses, q_losses, total_losses, perplexities, usages = [], [], [], [], []
 
     sharp_loss = LaplacianVarianceLoss(1).to(device)
 
     for epoch in tqdm(range(1, args.epochs + 1), desc="EPOCH"):
         model.train()
-        epoch_recon, epoch_q = 0.0, 0.0
+        epoch_recon, epoch_q, epoch_total = 0.0, 0.0, 0.0
         counts = torch.zeros(args.n_embed, device=device)
 
         for data in tqdm(dataloader, desc="BATCH", leave=False):
             data = data.to(device)  # expects [N, C, H, W]
 
             x_rec, qloss, idx = model(data)
-            loss, rec = loss_function(x_rec, data, qloss, sharp_loss, lam_q=args.lam_q)
+            loss, rec, sharp = loss_function(x_rec, data, qloss, sharp_loss,
+                                              lam_q=args.lam_q, lam_sharp=args.lam_sharp)
 
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
@@ -200,20 +211,24 @@ if __name__ == "__main__":
             bs = data.size(0)
             epoch_recon += rec.item() * bs
             epoch_q += qloss.item() * bs
+            epoch_total += loss.item() * bs
             counts += torch.bincount(idx.flatten(), minlength=args.n_embed)
 
         avg_recon = epoch_recon / n_samples
         avg_q = epoch_q / n_samples
+        avg_total = epoch_total / n_samples
         p = counts / counts.sum()
         perplexity = torch.exp(-(p * torch.log(p + 1e-10)).sum()).item()
         usage = (counts > 0).float().mean().item()
 
         recon_losses.append(avg_recon)
         q_losses.append(avg_q)
+        total_losses.append(avg_total)
         perplexities.append(perplexity)
         usages.append(usage)
         print(f"Epoch {epoch}/{args.epochs} | recon: {avg_recon:.4f}  q: {avg_q:.4f}  "
-              f"perplexity: {perplexity:.1f}/{args.n_embed}  usage: {usage:.1%}")
+              f"total: {avg_total:.4f}  perplexity: {perplexity:.1f}/{args.n_embed}  "
+              f"usage: {usage:.1%}")
 
         if args.reset_dead:
             with torch.no_grad():
@@ -227,4 +242,4 @@ if __name__ == "__main__":
                 checkpoint_dir / f"vqvae_epoch{epoch}.pt", config,
             )
 
-    plot_curves(recon_losses, q_losses, perplexities, usages, loss_curve_path)
+    plot_curves(recon_losses, q_losses, total_losses, perplexities, usages, loss_curve_path)
