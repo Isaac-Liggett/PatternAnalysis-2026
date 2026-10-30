@@ -24,7 +24,7 @@ For this project I have chosen stable diffusion model as it has become (close to
 
 I have created and trained a VQVAE model on Rangpur already which has achieved good results on the ADNI dataset. 
 
-![Preliminary VQVAE Loss Curve](./preliminary_vqvae_loss_curve.png)
+![Preliminary VQVAE Loss Curve](./resources/preliminary_vqvae_loss_curve.png)
 
 ## Risks, Budget and Fallback
 
@@ -38,3 +38,5 @@ Budget:
 The latent diffusion model gave significant speed boosts to the generative modeling training community. The paper notes that training on imagenet using an A100 GPU took roughly 6.66hrs/epoch (VQVAE) for which they trained the model for roughly 2M steps taking around 1-2weeks of gpu training time. Considering this data and the relavtive size of ADNI (10,400 images) versus imagenet (1,281,167 images 1,000 classes) the time to train should be significantly smaller 10400/1281167 = 0.8% ~4hrs (conservatively) for training the diffusion portion of the model and from abalation ~3hrs to train the VQVAE portion. 
 
 Total estimated training time for a full run ~7hrs.
+
+# Dependencies

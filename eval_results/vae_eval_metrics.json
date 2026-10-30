@@ -1,0 +1,112 @@
+[
+  {
+    "checkpoint": "C:\\Users\\isaac\\OneDrive\\Documents\\University\\Y3S2\\COMP3710\\project_data\\vae_run\\data\\checkpoints\\vae_epoch10.pt",
+    "epoch": 10,
+    "train_loss": 395.3181283011803,
+    "mean_ssim": 0.777196857569029,
+    "mean_recon_l1": 2188.06212368972,
+    "mean_kl": 54.871314426120236,
+    "total_runtime_s": 22.55539910000516,
+    "images_per_sec": 197.20333833503227,
+    "n_images": 4448
+  },
+  {
+    "checkpoint": "C:\\Users\\isaac\\OneDrive\\Documents\\University\\Y3S2\\COMP3710\\project_data\\vae_run\\data\\checkpoints\\vae_epoch15.pt",
+    "epoch": 15,
+    "train_loss": 367.4309340344942,
+    "mean_ssim": 0.7819615495290687,
+    "mean_recon_l1": 2149.7802949534903,
+    "mean_kl": 51.76091389004275,
+    "total_runtime_s": 16.009630300017307,
+    "images_per_sec": 277.83277418936973,
+    "n_images": 4448
+  },
+  {
+    "checkpoint": "C:\\Users\\isaac\\OneDrive\\Documents\\University\\Y3S2\\COMP3710\\project_data\\vae_run\\data\\checkpoints\\vae_epoch20.pt",
+    "epoch": 20,
+    "train_loss": 347.9020787840623,
+    "mean_ssim": 0.7842768477878982,
+    "mean_recon_l1": 2134.30662393913,
+    "mean_kl": 56.08635135348752,
+    "total_runtime_s": 15.554478399979416,
+    "images_per_sec": 285.9626588318054,
+    "n_images": 4448
+  },
+  {
+    "checkpoint": "C:\\Users\\isaac\\OneDrive\\Documents\\University\\Y3S2\\COMP3710\\project_data\\vae_run\\data\\checkpoints\\vae_epoch25.pt",
+    "epoch": 25,
+    "train_loss": 332.8795209327111,
+    "mean_ssim": 0.7848070435386767,
+    "mean_recon_l1": 2130.9653886753877,
+    "mean_kl": 55.45990559694578,
+    "total_runtime_s": 15.485864699992817,
+    "images_per_sec": 287.229682434334,
+    "n_images": 4448
+  },
+  {
+    "checkpoint": "C:\\Users\\isaac\\OneDrive\\Documents\\University\\Y3S2\\COMP3710\\project_data\\vae_run\\data\\checkpoints\\vae_epoch30.pt",
+    "epoch": 30,
+    "train_loss": 321.1689787116418,
+    "mean_ssim": 0.7858241386979604,
+    "mean_recon_l1": 2134.460841775798,
+    "mean_kl": 56.06924815829709,
+    "total_runtime_s": 15.424920999997994,
+    "images_per_sec": 288.3645238766914,
+    "n_images": 4448
+  },
+  {
+    "checkpoint": "C:\\Users\\isaac\\OneDrive\\Documents\\University\\Y3S2\\COMP3710\\project_data\\vae_run\\data\\checkpoints\\vae_epoch35.pt",
+    "epoch": 35,
+    "train_loss": 311.294335730626,
+    "mean_ssim": 0.7843719669383207,
+    "mean_recon_l1": 2168.4423217773438,
+    "mean_kl": 54.13050298896625,
+    "total_runtime_s": 15.366463400016073,
+    "images_per_sec": 289.46152957975664,
+    "n_images": 4448
+  },
+  {
+    "checkpoint": "C:\\Users\\isaac\\OneDrive\\Documents\\University\\Y3S2\\COMP3710\\project_data\\vae_run\\data\\checkpoints\\vae_epoch40.pt",
+    "epoch": 40,
+    "train_loss": 302.7839311364981,
+    "mean_ssim": 0.7852642776297151,
+    "mean_recon_l1": 2157.2828983883205,
+    "mean_kl": 55.63176244282894,
+    "total_runtime_s": 15.378325999976369,
+    "images_per_sec": 289.23824348676413,
+    "n_images": 4448
+  },
+  {
+    "checkpoint": "C:\\Users\\isaac\\OneDrive\\Documents\\University\\Y3S2\\COMP3710\\project_data\\vae_run\\data\\checkpoints\\vae_epoch45.pt",
+    "epoch": 45,
+    "train_loss": 296.1978313886202,
+    "mean_ssim": 0.7853765972226644,
+    "mean_recon_l1": 2149.5678855841106,
+    "mean_kl": 54.882894845317594,
+    "total_runtime_s": 15.482052200008184,
+    "images_per_sec": 287.3004135716355,
+    "n_images": 4448
+  },
+  {
+    "checkpoint": "C:\\Users\\isaac\\OneDrive\\Documents\\University\\Y3S2\\COMP3710\\project_data\\vae_run\\data\\checkpoints\\vae_epoch5.pt",
+    "epoch": 5,
+    "train_loss": 451.16700893695537,
+    "mean_ssim": 0.7701378891365134,
+    "mean_recon_l1": 2242.285781970127,
+    "mean_kl": 56.538418310151684,
+    "total_runtime_s": 15.684176100010518,
+    "images_per_sec": 283.5979379240085,
+    "n_images": 4448
+  },
+  {
+    "checkpoint": "C:\\Users\\isaac\\OneDrive\\Documents\\University\\Y3S2\\COMP3710\\project_data\\vae_run\\data\\checkpoints\\vae_epoch50.pt",
+    "epoch": 50,
+    "train_loss": 290.2885310627864,
+    "mean_ssim": 0.7850379375673884,
+    "mean_recon_l1": 2162.0913437218974,
+    "mean_kl": 54.185333046124136,
+    "total_runtime_s": 15.262116900004912,
+    "images_per_sec": 291.44056680620554,
+    "n_images": 4448
+  }
+]

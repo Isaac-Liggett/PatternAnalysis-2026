@@ -1,0 +1,50 @@
+{
+  "config": {
+    "checkpoint": "C:\\Users\\isaac\\OneDrive\\Documents\\University\\Y3S2\\COMP3710\\project_data\\vae_run\\data\\checkpoints\\vae_epoch30.pt",
+    "num_samples": 200,
+    "metric_space": "pixel",
+    "seed": 42,
+    "vae_config": {
+      "in_channels": 1,
+      "latent_dim": 256,
+      "hidden_dims": [
+        32,
+        64,
+        128,
+        256,
+        512
+      ],
+      "image_size": 256
+    }
+  },
+  "metrics": {
+    "checkpoint": "vae_epoch30",
+    "epoch": 30,
+    "path": "C:\\Users\\isaac\\OneDrive\\Documents\\University\\Y3S2\\COMP3710\\project_data\\vae_run\\data\\checkpoints\\vae_epoch30.pt",
+    "train_loss": 321.1689787116418,
+    "mean_recon_ssim": 0.7858233434690846,
+    "mean_recon_l1": 2133.7019894826326,
+    "mean_kl": 56.06924815829709,
+    "recon_eval_seconds": 16.588750199996866,
+    "generation_seconds": 0.23202280001714826,
+    "gen_images_per_sec": 861.984253207954,
+    "best_match_ssim_mean": 0.7682358622550964,
+    "best_match_ssim_std": 0.018060509115457535,
+    "best_match_ssim_min": 0.692986249923706,
+    "best_match_ssim_max": 0.8046183586120605,
+    "mean_pairwise_ssim": 0.6952720063195812,
+    "status": "copying",
+    "verdict": "DATA-COPYING DETECTED: Synthetic samples are significantly closer to training images than held-out test images are (Z_U << 0, p < 0.05).",
+    "z_u_score": -17.789517922540583,
+    "u_statistic": 114544.0,
+    "p_value_two_sided": 8.525078322650303e-71,
+    "p_value_copying_one_sided": 4.2625391613251515e-71,
+    "train_set_size": 10400,
+    "test_set_size": 4448,
+    "gen_set_size": 200,
+    "mean_dist_test_to_train": 28.712202072143555,
+    "std_dist_test_to_train": 3.846513271331787,
+    "mean_dist_gen_to_train": 23.687959671020508,
+    "std_dist_gen_to_train": 2.746887445449829
+  }
+}
