@@ -216,7 +216,7 @@ def Norm(c):
 
 def timestep_embedding(t, dim, max_period=10000):
     half = dim // 2
-    freqs = torch.exp(-torch.log(max_period) * torch.arange(half, device=t.device) / half)
+    freqs = max_period ** (-torch.arange(half, dtype=torch.float32, device=t.device) / half)
     args = t.float()[:, None] * freqs[None]
     return torch.cat([torch.sin(args), torch.cos(args)], dim=-1)   # (B, dim)
 
