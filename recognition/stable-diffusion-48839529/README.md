@@ -150,6 +150,8 @@ The results for the baseline VAE and VQ-VAE/Diffusion models are shown below:
 | 75 | 0.99 | 8.23 | 53.13 | Not copying |
 *Table 4: Diffusion Model Copying Results Table (With Laplacian Sharpness Loss)*
 
+The above tables provides sufficient evidence to accept the null hypothesis that the Stable Diffusion model does not copy training data. The VAE however, clearly does copy training data. Hence, this alone is highly convincing evidence that the Diffusion model should be prefered over the VAE for the research dilemma. 
+
 ## Qualitative Analysis
 
 **VAE Model**
@@ -182,7 +184,30 @@ Given the three explored models, I recommend the diffusion model with laplacian 
 
 If budget allows then I recommend persuing more modern alternatives such as flow matching and diffusion-transformer architectures which may provide higher quality samples with similar non-copying behaviour.  
 
+# Usage Examples
 
+To use this module execute the following files whilst supplying the arguments required (argparse). Below are some usage examples for the files:
+
+*train.py* - This file will train both the VQ-VAE and UNET models 
+`python train.py --data-dir=...\ADNI\AD_NC\train\AD`
+
+*predict.py* - This file will perform inference using the trained vqvae and unet models. It will also evaluate it using Meehan Three Sample Test and pairwise SSIM (not VQ-VAE SSIM)
+`python predict.py --vqvae-ckpt=...\checkpoints\vqvae_epoch50.pt --unet-ckpt=...denoising_unet_epoch75.pt --train-data-dir=...\ADNI\AD_NC\train\AD --test-data-dir=...\ADNI\AD_NC\test\AD`
+
+For any of the above files run `python filename.py --help` for options.
 
 # Appendix
 ![VQ-VAE Evaluation Summary](./resources/vqvae_eval_summary.png)
+
+# AI Usage Declaration
+The following AI tools were used to help with this assessment:
+- Claude
+- Google Antigravity using Claude Sonnet 4.6 & Gemini Flash
+
+The above AI tools were used for the following purposes:
+- Generating boilerplate code such as scaffolding for the VQ-VAE
+- Explaining LDM concepts such as the nosing schedule and numerical integration for generation processes
+- Converting my multiple files into the required format ie. predict.py, train.py
+- Generating and modifying matplotlib plotting scripts
+
+AI Generated Code was thoroughly read through and tested by running the scripts. Not all code ran successfully on first try and so some human-performed modifications were done to ensure proper functionality.
