@@ -70,6 +70,119 @@ This project was created using python version (3.14<=). The required packages ar
 - Argparse/pathlib
 
 # The Open Research Dilemma
+The baseline model for these experiements is a standard VAE. For both the VAE and VQ-VAE/Diffusion, the models were evaluated using the following statistics:
+- SSIM of reconstruction (against test dataset)
+- Reconstruction loss
+- Meehan Three Sample non-parametric test for data copying
 
-![Sharpness Successful Sample](./resources/sharplow01.png)
-![Sharpness Poor Sample](./resources/sharplow02.png)
+The Meehan test was chosen especially because it is a well-used statistic used to determine whether a generative model generalizes to the test distribution or appears to 'copy' the training dataset. 
+
+Two variants of the Diffusion/VQ-VAE were trained, the first one had no laplacian sharpness loss applied and produced relatively blurry images as will be discussed in the qualitative evaluation section. Hence, experiemnts were conducted to evaluate whether adding a laplacian sharness penalty to the VQ-VAE training would benefit the model.
+
+The results for the baseline VAE and VQ-VAE/Diffusion models are shown below:
+
+
+| Epoch | Recon SSIM | Recon L1 | KL | Gen SSIM | Z_U | p_copy | verdict | img/s |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 5 | 0.7702 | 2241.9449 | 56.5384 | 0.7566 | -18.463 | 2.038e-76 | copying | 880.5 |
+| 10 | 0.7772 | 2189.0043 | 54.8713 | 0.7615 | -17.377 | 6.149e-68 | copying | 797.0 |
+| 15 | 0.7820 | 2148.9950 | 51.7609 | 0.7649 | -16.177 | 3.660e-59 | copying | 770.6 |
+| 20 | 0.7843 | 2133.1342 | 56.0864 | 0.7660 | -16.900 | 2.245e-64 | copying | 837.6 |
+| 25 | 0.7848 | 2129.3709 | 55.4599 | 0.7669 | -16.349 | 2.200e-60 | copying | 800.2 |
+| 30 | 0.7858 | 2133.7020 | 56.0692 | 0.7682 | -17.790 | 4.263e-71 | copying | 862.0 |
+| 35 | 0.7845 | 2166.9725 | 54.1305 | 0.7671 | -17.730 | 1.231e-70 | copying | 843.5 |
+| 40 | 0.7852 | 2156.0094 | 55.6318 | 0.7673 | -17.689 | 2.555e-70 | copying | 884.9 |
+| 45 | 0.7855 | 2148.4926 | 54.8829 | 0.7671 | -18.253 | 9.830e-75 | copying | 728.0 |
+| 50 | 0.7850 | 2161.9264 | 54.1853 | 0.7681 | -17.820 | 2.456e-71 | copying | 836.1 |
+
+*Table 1: VAE Evaluation results per given epoch*
+
+| Epoch | Recon SSIM | Recon L1 | img/s |
+| :--- | :--- | :--- | :---  |
+| 5 | 0.9585 | 657.4826 | 137.7|
+| 10 | 0.9647 | 592.0007 | 131.9 |
+| 15 | 0.9663 | 546.1696 | 137.7 |
+| 20 | 0.9681 | 529.0023 | 136.2 |
+| 25 | 0.9705 | 521.3611 | 137.4 |
+| 30 | 0.9706 | 500.2510 | 137.7 |
+| 35 | 0.9703 | 495.1634 | 137.9 |
+| 40 | 0.9713 | 488.3626 | 137.7 |
+| 45 | 0.9717 | 483.9963 | 137.7 |
+| 50 | 0.9722 | 478.8764 | 137.8 |
+
+*Table 2: VQ-VAE Evaluation Results per given epoch (With Sharpness Loss)*
+
+| epoch | p (copy) | z_u_score | img/s | verdict |
+|------:|---------:|----------:|------:|:--------|
+| 5 | 0.9977 | 2.84 | 44.62 | Not copying |
+| 10 | 1.0 | 12.44 | 50.96 | Not copying |
+| 15 | 0.9999 | 8.01 | 50.55 | Not copying |
+| 20 | 1.0000 | 9.40 | 50.46 | Not copying |
+| 25 | 0.9999 | 8.05 | 52.30 | Not copying |
+| 30 | 0.9999 | 6.30 | 51.62 | Not copying |
+| 35 | 0.9999 | 5.47 | 47.61 | Not copying |
+| 40 | 0.9976 | 2.82 | 47.32 | Not copying |
+| 45 | 0.9700 | 1.88 | 47.30 | Not copying |
+| 50 | 0.9785 | 2.02 | 52.27 | Not copying |
+| 55 | 0.9999 | 6.85 | 48.78 | Not copying |
+| 60 | 0.9999 | 6.31 | 47.66 | Not copying |
+| 65 | 0.7201 | 0.58 | 48.12 | Not copying |
+| 70 | 0.9987 | 3.04 | 52.08 | Not copying |
+| 75 | 0.8947 | 1.25 | 52.01 | Not copying |
+*Table 3: Diffusion Model Copying Results Table (No Laplacian Sharpness Loss)*
+
+| epoch | p (copy) | z_u_score | img/s | verdict |
+|------:|---------:|----------:|------:|:--------|
+| 5 | 1.0 | 21.99 | 49.96 | Not copying |
+| 10 | 1.0 | 18.80 | 52.08 | Not copying |
+| 15 | 0.99 | 7.24 | 51.53 | Not copying |
+| 20 | 1.0 | 19.72 | 52.66 | Not copying |
+| 25 | 1.0 | 20.68 | 52.92 | Not copying |
+| 30 | 0.99 | 7.76 | 52.87 | Not copying |
+| 35 | 1.0 | 15.16 | 52.83 | Not copying |
+| 40 | 1.0 | 15.96 | 53.19 | Not copying |
+| 45 | 1.0 | 16.11 | 49.95 | Not copying |
+| 50 | 0.99 | 6.78 | 52.92 | Not copying |
+| 55 | 1.0 | 11.76 | 52.78 | Not copying |
+| 60 | 1.0 | 13.52 | 52.81 | Not copying |
+| 65 | 1.0 | 13.30 | 53.15 | Not copying |
+| 70 | 1.0 | 10.03 | 52.98 | Not copying |
+| 75 | 0.99 | 8.23 | 53.13 | Not copying |
+*Table 4: Diffusion Model Copying Results Table (With Laplacian Sharpness Loss)*
+
+## Qualitative Analysis
+
+**VAE Model**
+
+![alt text](./resources/vae_samples.png)
+
+**Diffusion Without Laplacian Sharpness**
+
+| ![Sample 1](./resources/regular_diffusion/sample_1.png) ![Sample 2](./resources/regular_diffusion/sample_2.png) ![Sample 3](./resources/regular_diffusion/sample_3.png) ![Sample 4](./resources/regular_diffusion/sample_4.png)
+
+**Diffusion With Laplacian Sharpness**
+
+![alt text](./resources/sharpness_diffusion_samples.png)
+
+The above images are derived from the models of their respective labels. It is apparent with the VAE baseline that significant structure is retained for some samples, however, generated images frequently have artifacts as can be seen with images 1 and 4.
+
+The initial diffusion model (without laplacian sharpness) appears to retain significantly more structure with the major brain regions and crevices in the outer lobes. However, notice the images are frequently blurry or prone to artifacts like demonstrated in images 1 and 4. This observation is what prompted experimentation with laplacian sharpness loss in hopes of a clearer image.
+
+After employing the laplacian sharpness loss on the VQ-VAE, the final trained diffusion model retains the structure and also typically has a non-blury image. The first image in this sequence is probably the best out of the three models, retaining structure with no artifacts and significantly less blurriness. However, this model is still subject to some artifcats like shown in images 2 and 4. This is likely due to the sharpness loss impacting the surrounds of the image, but note it hasn't affected the brain region significantly which could be viewed as an improvement. Moreover, it is significant to note image 3 which has less crevices in the outer lobes region. This artifcat appeared occasionally upon generations but is a potential failure mode of this algorithm.
+
+**Failure Modes:**
+- Generated Images sometimes have a halo or glow like artifact
+- Some generated images have non-distinct brain regions 
+
+These failure modes are likely resolved by reconsidering the denoising unet architecture. Modern alternatives typically use a transformer architecture and/or deploy flow-matching algorithms for the generation process instead. These methods are recommended next steps if wanting higher fidelity synthetic images.
+
+## Recommendations for the project manager
+
+Given the three explored models, I recommend the diffusion model with laplacian sharpness loss. This is because both diffusion models outperform the VAE baseline on both SSIM (test set) and Meehan three sample test for copying. According to the statistical analysis, it is highly unlikely the diffusion models are copying patent samples in the training data, significantly aiding the main privacy concern of the project. 
+
+If budget allows then I recommend persuing more modern alternatives such as flow matching and diffusion-transformer architectures which may provide higher quality samples with similar non-copying behaviour.  
+
+
+
+# Appendix
+![VQ-VAE Evaluation Summary](./resources/vqvae_eval_summary.png)
