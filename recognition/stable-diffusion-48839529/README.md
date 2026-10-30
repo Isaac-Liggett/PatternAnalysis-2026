@@ -63,12 +63,6 @@ The latent diffusion model gave significant speed boosts to the generative model
 
 Total estimated training time for a full run ~7hrs.
 
-# Requirements
-This project was created using python version (3.14<=). The required packages are:
-- Matplotlib
-- Pytorch 
-- Argparse/pathlib
-
 # The Open Research Dilemma
 The baseline model for these experiements is a standard VAE. For both the VAE and VQ-VAE/Diffusion, the models were evaluated using the following statistics:
 - SSIM of reconstruction (against test dataset)
@@ -183,6 +177,16 @@ These failure modes are likely resolved by reconsidering the denoising unet arch
 Given the three explored models, I recommend the diffusion model with laplacian sharpness loss. This is because both diffusion models outperform the VAE baseline on both SSIM (test set) and Meehan three sample test for copying. According to the statistical analysis, it is highly unlikely the diffusion models are copying patent samples in the training data, significantly aiding the main privacy concern of the project. 
 
 If budget allows then I recommend persuing more modern alternatives such as flow matching and diffusion-transformer architectures which may provide higher quality samples with similar non-copying behaviour.  
+
+# Requirements
+This project was created using python version (3.14<=). The required packages are:
+- Matplotlib
+- Pytorch 
+- Argparse/pathlib
+- numpy
+- TQDM
+- math
+- torchvision
 
 # Usage Examples
 
