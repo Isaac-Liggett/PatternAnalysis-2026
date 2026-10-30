@@ -10,11 +10,11 @@ Stable Diffusion is an averarching term covering many different architectures. F
 
 The above architecture diagram was taken directly from the paper. For this implementation we will disregard the transformer-based conditioning. Below is the architecture diagram of the VQVAE taken from the referenced paper [(Esser et al., CVPR 2021)](https://arxiv.org/pdf/2012.09841)
 
-![VQVAE Architecture Diagram](./resources/image.png)
+![VQVAE Architecture Diagram](./resources/vae_architecture.png)
 
 The Denoising UNET Architecture was adapted from assignment 2 with the addition of some Attention layers within the bottneck portion of the model which is consistent with modern UNET implementations.
 
-![UNET Architecture Diagram](image.png)
+![Unet Architecture Diagram](./resources/unet_architecture.png)
 [(Ronneberger et al, 2015)](https://arxiv.org/pdf/1505.04597)
 
 The Stable Diffusion model works by first encoding the image into latent space via a pretrained VQVAE. The UNET is then trained to predict the added noise to an image for a certain step. For this implementation I utilized a linear nosing schedule. Once the UNET and VQVAE are finished training, the encoder can be disgarded and only the unet and decoder utilized to generate images. This happens by first sampling from the multivariate gaussian, iteratively predicting the added noise, and then numerically integrating along the denosing trajectory for a predefined number of timesteps to recover the image. 
