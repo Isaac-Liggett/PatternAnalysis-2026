@@ -40,6 +40,7 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 import matplotlib.pyplot as plt
+from sklearn.manifold import TSNE
 from torchvision.utils import make_grid, save_image
 
 from modules import StableDiffusion
@@ -447,6 +448,96 @@ def plot_evaluation(ssim_res, meehan_res, gen_images, output_dir, title_prefix="
     save_image(grid, output_dir / "generated_samples_grid.png")
 
 
+def plot_tsne(train_feats, test_feats, gen_feats, output_dir,
+              perplexity=30, seed=42, max_samples_per_set=500,
+              title_prefix=""):
+    """Create a side-by-side t-SNE visualisation of generated, test and train images.
+
+    Left panel  : Generated (red) vs Test  (blue)
+    Right panel : Generated (red) vs Train (green)
+
+    All three sets are embedded jointly so that coordinates are comparable
+    across the two panels.
+
+    Parameters
+    ----------
+    train_feats, test_feats, gen_feats : torch.Tensor
+        2-D feature tensors (N, D) – either flattened pixels or latent vectors.
+    output_dir : Path
+        Directory to save the resulting figure.
+    perplexity : int
+        t-SNE perplexity (should be < total number of points / 3).
+    seed : int
+        Random state for reproducibility.
+    max_samples_per_set : int
+        Cap per set to keep runtime reasonable. Set to None to disable.
+    title_prefix : str
+        Optional prefix for subplot titles.
+    """
+    output_dir = Path(output_dir)
+
+    # Sub-sample large datasets to keep t-SNE fast
+    def _subsample(t, n):
+        if n is None or t.size(0) <= n:
+            return t
+        idx = torch.randperm(t.size(0), generator=torch.Generator().manual_seed(seed))[:n]
+        return t[idx]
+
+    tr = _subsample(train_feats, max_samples_per_set).numpy()
+    te = _subsample(test_feats, max_samples_per_set).numpy()
+    ge = _subsample(gen_feats, max_samples_per_set).numpy()
+
+    n_tr, n_te, n_ge = len(tr), len(te), len(ge)
+
+    # Joint embedding so coordinates are comparable
+    all_feats = np.concatenate([tr, te, ge], axis=0)
+    effective_perplexity = min(perplexity, (len(all_feats) - 1) // 3)
+    effective_perplexity = max(effective_perplexity, 5)
+
+    print(f"  Running t-SNE on {len(all_feats)} samples "
+          f"(train={n_tr}, test={n_te}, gen={n_ge}, perplexity={effective_perplexity}) …")
+    tsne = TSNE(n_components=2, perplexity=effective_perplexity,
+                random_state=seed, init="pca", learning_rate="auto")
+    emb = tsne.fit_transform(all_feats)
+
+    emb_tr = emb[:n_tr]
+    emb_te = emb[n_tr:n_tr + n_te]
+    emb_ge = emb[n_tr + n_te:]
+
+    # Plot
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7))
+
+    s, alpha = 12, 0.6
+
+    # Left: Generated vs Test
+    ax1.scatter(emb_te[:, 0], emb_te[:, 1], c="royalblue", s=s, alpha=alpha,
+                label=f"Test (N={n_te})", edgecolors="none")
+    ax1.scatter(emb_ge[:, 0], emb_ge[:, 1], c="crimson", s=s, alpha=alpha,
+                label=f"Generated (N={n_ge})", edgecolors="none")
+    ax1.set_title(f"{title_prefix}Generated vs Test Set (t-SNE)")
+    ax1.legend(fontsize=10, markerscale=2)
+    ax1.set_xlabel("t-SNE 1")
+    ax1.set_ylabel("t-SNE 2")
+    ax1.grid(True, alpha=0.2)
+
+    # Right: Generated vs Train
+    ax2.scatter(emb_tr[:, 0], emb_tr[:, 1], c="forestgreen", s=s, alpha=alpha,
+                label=f"Train (N={n_tr})", edgecolors="none")
+    ax2.scatter(emb_ge[:, 0], emb_ge[:, 1], c="crimson", s=s, alpha=alpha,
+                label=f"Generated (N={n_ge})", edgecolors="none")
+    ax2.set_title(f"{title_prefix}Generated vs Train Set (t-SNE)")
+    ax2.legend(fontsize=10, markerscale=2)
+    ax2.set_xlabel("t-SNE 1")
+    ax2.set_ylabel("t-SNE 2")
+    ax2.grid(True, alpha=0.2)
+
+    fig.tight_layout()
+    save_path = output_dir / "tsne_visualization.png"
+    fig.savefig(save_path, dpi=150)
+    plt.close(fig)
+    print(f"  Saved t-SNE visualisation to {save_path}")
+
+
 # CLI
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -610,6 +701,10 @@ def main():
 
     # Persist
     plot_evaluation(ssim_results, meehan_results, gen_images, args.output_dir)
+
+    # t-SNE visualisation: generated vs test and generated vs train
+    print("\nComputing t-SNE visualisation …")
+    plot_tsne(train_feats, test_feats, gen_feats, args.output_dir, seed=args.seed)
 
     ssim_scalars = {k: v for k, v in ssim_results.items()
                     if k not in ("per_sample_best_ssim", "best_match_indices")}
