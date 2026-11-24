@@ -146,6 +146,19 @@ The results for the baseline VAE and VQ-VAE/Diffusion models are shown below:
 | 75 | 0.99 | 8.23 | 53.13 | Not copying |
 *Table 4: Diffusion Model Copying Results Table (With Laplacian Sharpness Loss)*
 
+| Epoch | VAE | VQVAE (Laplacian Sharpness) |
+|----:|----:|--------------------:|
+| 5 | 0.7702 | 0.9585 |
+| 10 | 0.7772 | 0.9647 |
+| 15 | 0.7820 | 0.9663 |
+| 20 | 0.7843 | 0.9681 |
+| 25 | 0.7848 | 0.9705 |
+| 30 | 0.7858 | 0.9706 |
+| 35 | 0.7845 | 0.9703 |
+| 40 | 0.7852 | 0.9713 |
+| 45 | 0.7855 | 0.9717 |
+| 50 | 0.7850 | 0.9722 |
+*Table 5: Evaluation of VAE versus VQVAE (sharness loss) on SSIM on the test dataset per epoch*
 
 The above tables provides sufficient evidence to accept the null hypothesis that the Stable Diffusion model does not copy training data. The VAE however, clearly does copy training data. Hence, this alone is highly convincing evidence that the Diffusion model should be prefered over the VAE for the research dilemma. 
 
@@ -153,9 +166,15 @@ The above tables provides sufficient evidence to accept the null hypothesis that
 
 Below is the TSNE plot for the diffusion model with sharpness penalty. 
 
-![TSNE Plot](./resources/tsne_visualization.png)
+![TSNE Plot Sharpness](./resources/tsne_visualization_sharpness.png)
 
-An interesting observation with this model is the bunching up of many samples in one area. This suggests either there is a bias with the sampling process that warrent further investigation. However, it is apparent with the samples distribution that the diffusion model is likely not copying the training set.
+An interesting observation with this model is the bunching up of many samples in one area. This suggests either there is a bias with the sampling process that warrent further investigation. 
+
+![TSNE Plot Regular](./resources/tsne_visualization.png)
+
+Above is the TSNE plot for the diffusion model trained without laplacian sharness. Since the tsne visualization was made in pixel space, this clearly shows that the bunching up from the sharness loss model was due to the sharpness loss itself.
+
+However, it is apparent with both models, that the samples distribution is likely not copying the training set. This further reinforces the Meehan test results. 
 
 ## Qualitative Analysis
 
