@@ -17,8 +17,8 @@ Usage:
     python predict.py \
         --vqvae-ckpt     ./data/checkpoints/vqvae_epoch_50.pt \
         --unet-ckpt      ./data/checkpoints/denoising_unet_epoch100.pt \
-        --train-data-dir ./keras_png_slices_data/keras_png_slices_train \
-        --test-data-dir  ./keras_png_slices_data/keras_png_slices_test \
+        --train-data-dir ./ADNI/AD_NC/train/AD \
+        --test-data-dir  ./ADNI/AD_NC/test/AD \
         --num-samples    100 \
         --output-dir     ./eval_diffusion_results
 
@@ -26,7 +26,8 @@ Outputs (in --output-dir):
     samples/                       individual generated PNGs (unless --no-save-samples)
     generated_samples_grid.png     grid of the first 16 samples
     ssim_distribution.png          histogram of best-match SSIM
-    meehan_three_sample_test.png   distance distributions + boxplot
+    meehan_three_sample_test.png   distance distributions + boxplot (unless --skip-meehan)
+    tsne_visualization.png         t-SNE embedding (gen vs test and gen vs train)
     diffusion_eval_metrics.json    config, metrics and per-sample details
 """
 
@@ -395,36 +396,37 @@ def plot_evaluation(ssim_res, meehan_res, gen_images, output_dir, title_prefix="
     """Generate diagnostic figures for SSIM and the Meehan three-sample test."""
     output_dir = Path(output_dir)
 
-    # Meehan distance distribution plot
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+    # Meehan distance distribution plot (if available)
+    if meehan_res is not None:
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
-    d_test = np.array(meehan_res["dist_test_to_train"])
-    d_gen = np.array(meehan_res["dist_gen_to_train"])
+        d_test = np.array(meehan_res["dist_test_to_train"])
+        d_gen = np.array(meehan_res["dist_gen_to_train"])
 
-    bins = np.histogram_bin_edges(np.concatenate([d_test, d_gen]), bins=30)
-    ax1.hist(d_test, bins=bins, alpha=0.6, label=f"Test → Train (N={len(d_test)})",
-             color="royalblue", density=True)
-    ax1.hist(d_gen, bins=bins, alpha=0.6, label=f"Synthetic → Train (N={len(d_gen)})",
-             color="crimson", density=True)
-    ax1.axvline(d_test.mean(), color="darkblue", linestyle="--", label=f"Mean Test ({d_test.mean():.2f})")
-    ax1.axvline(d_gen.mean(), color="darkred", linestyle="--", label=f"Mean Gen ({d_gen.mean():.2f})")
-    ax1.set_xlabel("Nearest-Neighbor Distance to Training Set")
-    ax1.set_ylabel("Density")
-    ax1.set_title(f"{title_prefix}Meehan et al. Distance Distributions\n"
-                  f"$Z_U = {meehan_res['z_u_score']:.3f}$ ({meehan_res['status']})")
-    ax1.legend(fontsize=9)
-    ax1.grid(True, alpha=0.3)
+        bins = np.histogram_bin_edges(np.concatenate([d_test, d_gen]), bins=30)
+        ax1.hist(d_test, bins=bins, alpha=0.6, label=f"Test → Train (N={len(d_test)})",
+                 color="royalblue", density=True)
+        ax1.hist(d_gen, bins=bins, alpha=0.6, label=f"Synthetic → Train (N={len(d_gen)})",
+                 color="crimson", density=True)
+        ax1.axvline(d_test.mean(), color="darkblue", linestyle="--", label=f"Mean Test ({d_test.mean():.2f})")
+        ax1.axvline(d_gen.mean(), color="darkred", linestyle="--", label=f"Mean Gen ({d_gen.mean():.2f})")
+        ax1.set_xlabel("Nearest-Neighbor Distance to Training Set")
+        ax1.set_ylabel("Density")
+        ax1.set_title(f"{title_prefix}Meehan et al. Distance Distributions\n"
+                      f"$Z_U = {meehan_res['z_u_score']:.3f}$ ({meehan_res['status']})")
+        ax1.legend(fontsize=9)
+        ax1.grid(True, alpha=0.3)
 
-    ax2.boxplot([d_test, d_gen], tick_labels=["Test → Train", "Synthetic → Train"], patch_artist=True,
-                boxprops=dict(facecolor="lightblue", color="blue"),
-                medianprops=dict(color="black", linewidth=1.5))
-    ax2.set_ylabel("Nearest-Neighbor Euclidean Distance")
-    ax2.set_title("Distance Comparison (Median & IQR)")
-    ax2.grid(True, alpha=0.3)
+        ax2.boxplot([d_test, d_gen], tick_labels=["Test → Train", "Synthetic → Train"], patch_artist=True,
+                    boxprops=dict(facecolor="lightblue", color="blue"),
+                    medianprops=dict(color="black", linewidth=1.5))
+        ax2.set_ylabel("Nearest-Neighbor Euclidean Distance")
+        ax2.set_title("Distance Comparison (Median & IQR)")
+        ax2.grid(True, alpha=0.3)
 
-    fig.tight_layout()
-    fig.savefig(output_dir / "meehan_three_sample_test.png", dpi=150)
-    plt.close(fig)
+        fig.tight_layout()
+        fig.savefig(output_dir / "meehan_three_sample_test.png", dpi=150)
+        plt.close(fig)
 
     # SSIM distribution plot
     best_ssims = np.array(ssim_res["per_sample_best_ssim"])
@@ -556,7 +558,7 @@ def parse_args():
                         help="Root directory of training images (default: <data-dir>/keras_png_slices_train)")
     parser.add_argument("--test-data-dir", type=Path, default=None,
                         help="Root directory of test images (default: <data-dir>/keras_png_slices_test)")
-    parser.add_argument("--data-dir", type=Path, default=Path("./keras_png_slices_data"),
+    parser.add_argument("--data-dir", type=Path, default=None,
                         help="Parent dataset directory containing train and test folders")
 
     # Generation parameters
@@ -585,6 +587,8 @@ def parse_args():
                         help="Directory for saving samples, metrics and plots")
     parser.add_argument("--no-save-samples", action="store_true",
                         help="Do not save individual generated images as PNGs")
+    parser.add_argument("--skip-meehan", action="store_true",
+                        help="Skip the Meehan three-sample test and only run SSIM and t-SNE")
 
     return parser.parse_args()
 
@@ -595,11 +599,11 @@ def resolve_data_dirs(args):
     test_dir = args.test_data_dir
 
     if train_dir is None:
-        candidate = args.data_dir / "keras_png_slices_train"
+        candidate = args.data_dir
         train_dir = candidate if candidate.is_dir() else args.data_dir
 
     if test_dir is None:
-        candidate = args.data_dir / "keras_png_slices_test"
+        candidate = args.data_dir
         test_dir = candidate if candidate.is_dir() else args.data_dir
 
     if not train_dir.is_dir():
@@ -688,16 +692,20 @@ def main():
     else:
         gen_feats = gen_images.flatten(start_dim=1)
 
-    print("Running Meehan et al. three-sample test …")
-    meehan_results = meehan_three_sample_test(
-        train_feats=train_feats,
-        test_feats=test_feats,
-        gen_feats=gen_feats,
-        device=device,
-    )
-    print(f"  Z_U: {meehan_results['z_u_score']:+.3f} "
-          f"(p_copy={meehan_results['p_value_copying_one_sided']:.3e}) "
-          f"→ {meehan_results['status']}")
+    if not args.skip_meehan:
+        print("Running Meehan et al. three-sample test …")
+        meehan_results = meehan_three_sample_test(
+            train_feats=train_feats,
+            test_feats=test_feats,
+            gen_feats=gen_feats,
+            device=device,
+        )
+        print(f"  Z_U: {meehan_results['z_u_score']:+.3f} "
+              f"(p_copy={meehan_results['p_value_copying_one_sided']:.3e}) "
+              f"→ {meehan_results['status']}")
+    else:
+        print("Skipping Meehan et al. three-sample test (--skip-meehan).")
+        meehan_results = None
 
     # Persist
     plot_evaluation(ssim_results, meehan_results, gen_images, args.output_dir)
@@ -708,8 +716,17 @@ def main():
 
     ssim_scalars = {k: v for k, v in ssim_results.items()
                     if k not in ("per_sample_best_ssim", "best_match_indices")}
-    meehan_scalars = {k: v for k, v in meehan_results.items()
-                      if k not in ("dist_test_to_train", "dist_gen_to_train")}
+    meehan_scalars = ({k: v for k, v in meehan_results.items()
+                       if k not in ("dist_test_to_train", "dist_gen_to_train")}
+                      if meehan_results is not None else {})
+
+    details_dict = {
+        "per_sample_best_ssim": ssim_results["per_sample_best_ssim"],
+        "best_match_indices": ssim_results["best_match_indices"],
+    }
+    if meehan_results is not None:
+        details_dict["dist_test_to_train"] = meehan_results["dist_test_to_train"]
+        details_dict["dist_gen_to_train"] = meehan_results["dist_gen_to_train"]
 
     with open(args.output_dir / "diffusion_eval_metrics.json", "w") as f:
         json.dump({
@@ -721,15 +738,11 @@ def main():
                 "metric_space": args.metric_space,
                 "seed": args.seed,
                 "generation_seconds": gen_elapsed,
+                "skip_meehan": args.skip_meehan,
             },
             "ssim": ssim_scalars,
             "meehan": meehan_scalars,
-            "details": {
-                "per_sample_best_ssim": ssim_results["per_sample_best_ssim"],
-                "best_match_indices": ssim_results["best_match_indices"],
-                "dist_test_to_train": meehan_results["dist_test_to_train"],
-                "dist_gen_to_train": meehan_results["dist_gen_to_train"],
-            },
+            "details": details_dict,
         }, f, indent=2)
 
     # Final summary
@@ -740,11 +753,14 @@ def main():
     print(f"  Best-match SSIM        : {ssim_results['best_match_ssim_mean']:.4f} "
           f"± {ssim_results['best_match_ssim_std']:.4f}")
     print(f"  Mean pairwise SSIM     : {ssim_results['mean_pairwise_ssim']:.4f}")
-    print(f"  Z_U                    : {meehan_results['z_u_score']:+.3f}")
-    print(f"  p (copying, one-sided) : {meehan_results['p_value_copying_one_sided']:.3e}")
-    print(f"  Mean NN dist gen→train : {meehan_results['mean_dist_gen_to_train']:.4f}")
-    print(f"  Mean NN dist test→train: {meehan_results['mean_dist_test_to_train']:.4f}")
-    print(f"  Verdict                : {meehan_results['verdict']}")
+    if meehan_results is not None:
+        print(f"  Z_U                    : {meehan_results['z_u_score']:+.3f}")
+        print(f"  p (copying, one-sided) : {meehan_results['p_value_copying_one_sided']:.3e}")
+        print(f"  Mean NN dist gen→train : {meehan_results['mean_dist_gen_to_train']:.4f}")
+        print(f"  Mean NN dist test→train: {meehan_results['mean_dist_test_to_train']:.4f}")
+        print(f"  Verdict                : {meehan_results['verdict']}")
+    else:
+        print("  Meehan test            : SKIPPED")
     print(f"{'═' * 66}")
     print(f"Results written to {args.output_dir}\n")
 

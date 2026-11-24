@@ -146,11 +146,19 @@ The results for the baseline VAE and VQ-VAE/Diffusion models are shown below:
 
 The above tables provides sufficient evidence to accept the null hypothesis that the Stable Diffusion model does not copy training data. The VAE however, clearly does copy training data. Hence, this alone is highly convincing evidence that the Diffusion model should be prefered over the VAE for the research dilemma. 
 
+# TSNE Visualization
+
+Below is the TSNE plot for the diffusion model with sharpness penalty. 
+
+![TSNE Plot](./resources/tsne_visualization.png)
+
+An interesting observation with this model is the bunching up of many samples in one area. This suggests either there is a bias with the sampling process that warrent further investigation. 
+
 ## Qualitative Analysis
 
 **VAE Model**
 
-![alt text](./resources/vae_samples.png)
+![VAE Samples](./resources/vae_samples.png)
 
 **Diffusion Without Laplacian Sharpness**
 
@@ -158,7 +166,7 @@ The above tables provides sufficient evidence to accept the null hypothesis that
 
 **Diffusion With Laplacian Sharpness**
 
-![alt text](./resources/sharpness_diffusion_samples.png)
+![Diffusion Samples](./resources/sharpness_diffusion_samples.png)
 
 The above images are derived from the models of their respective labels. It is apparent with the VAE baseline that significant structure is retained for some samples, however, generated images frequently have artifacts as can be seen with images 1 and 4.
 
@@ -179,14 +187,7 @@ Given the three explored models, I recommend the diffusion model with laplacian 
 If budget allows then I recommend persuing more modern alternatives such as flow matching and diffusion-transformer architectures which may provide higher quality samples with similar non-copying behaviour.  
 
 # Requirements
-This project was created using python version (3.14<=). The required packages are:
-- Matplotlib
-- Pytorch 
-- Argparse/pathlib
-- numpy
-- TQDM
-- math
-- torchvision
+This project was created using python version (3.14<=). Please review requirements.txt for the packages and versions.
 
 # Usage Examples
 
