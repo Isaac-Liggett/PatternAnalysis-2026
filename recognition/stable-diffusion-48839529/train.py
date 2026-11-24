@@ -28,7 +28,9 @@ from tqdm import tqdm
 
 from modules import VQModel, reset_dead_codes, DenoisingUNet
 from dataset import get_dataloader
-from utils import save_vq_checkpoint, save_ldm_checkpoint, plot_vq_curves, plot_ldm_loss, LaplacianVarianceLoss
+from utils import (save_vq_checkpoint, save_ldm_checkpoint, plot_vq_curves,
+                   plot_ldm_loss, LaplacianVarianceLoss, GPUTracker,
+                   plot_gpu_usage)
 
 # Hyperparameters
 
@@ -125,12 +127,14 @@ def train_vqvae(args, config, checkpoint_dir):
     n_samples = len(dataloader.dataset)
     hist = {k: [] for k in ("recon", "q", "total", "sharp", "perplexity", "usage")}
     curve_path = args.output_dir / "vqvae_curves.png"
+    gpu_tracker = GPUTracker(device)
 
     # Main VQ-VAE training loop
     for epoch in tqdm(range(1, args.vq_epochs + 1), desc="VQ EPOCH"):
         model.train()
         e_rec = e_q = e_total = e_sharp = 0.0
         counts = torch.zeros(args.n_embed, device=device)
+        gpu_tracker.epoch_start()
 
         for data in tqdm(dataloader, desc="BATCH", leave=False):
             data = data.to(device)
@@ -167,6 +171,8 @@ def train_vqvae(args, config, checkpoint_dir):
               f"total: {hist['total'][-1]:.4f}  "
               f"perplexity: {perplexity:.1f}/{args.n_embed}  usage: {usage:.1%}")
 
+        gpu_tracker.epoch_end(epoch)
+
         if args.reset_dead:
             with torch.no_grad():
                 z = model.encode(data)  # last batch of the epoch only
@@ -179,6 +185,11 @@ def train_vqvae(args, config, checkpoint_dir):
                 hist["recon"][-1] + args.lam_q * hist["q"][-1],
                 checkpoint_dir / f"vqvae_epoch{epoch}.pt", config)
             plot_vq_curves(hist, curve_path)
+
+    gpu_tracker.summary()
+    plot_gpu_usage(gpu_tracker.history,
+                   args.output_dir / "vqvae_gpu_usage.png",
+                   stage_name="Stage 1: VQ-VAE")
 
     return model
 
@@ -225,10 +236,12 @@ def train_diffusion(args, vqvae, embed_dim, checkpoint_dir):
 
     losses = []
     loss_path = args.output_dir / "denoising_loss.png"
+    gpu_tracker = GPUTracker(device)
 
     for epoch in tqdm(range(1, args.ldm_epochs + 1), desc="LDM EPOCH"):
         unet.train()
         running = 0.0
+        gpu_tracker.epoch_start()
 
         for data in tqdm(dataloader, desc="BATCH", leave=False):
             data = data.to(device)
@@ -250,12 +263,19 @@ def train_diffusion(args, vqvae, embed_dim, checkpoint_dir):
         losses.append(running / len(dataloader))
         print(f"[LDM] Epoch {epoch}/{args.ldm_epochs} | loss: {losses[-1]:.4f}")
 
+        gpu_tracker.epoch_end(epoch)
+
         if epoch % args.checkpoint_every == 0 or epoch == args.ldm_epochs:
             save_ldm_checkpoint(
                 unet, optimizer, epoch, losses[-1],
                 checkpoint_dir / f"denoising_unet_epoch{epoch}.pt",
                 unet_config, latent_std, T)
             plot_ldm_loss(losses, loss_path)
+
+    gpu_tracker.summary()
+    plot_gpu_usage(gpu_tracker.history,
+                   args.output_dir / "diffusion_gpu_usage.png",
+                   stage_name="Stage 2: Diffusion")
 
     return unet
 
