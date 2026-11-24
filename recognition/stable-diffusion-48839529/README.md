@@ -22,6 +22,8 @@ The Stable Diffusion model works by first encoding the image into latent space v
 # Preprocessing
 The dataset used was the ADNI Brain MRI dataset. The dataloader supplied in dataset.py incorporates basic image rescaling and greyscale conversion for data preprocessing as this was found to be sufficient.
 
+The given dataset has training and testing splits which are sufficient for testing generalisation for generative models as I choose a fixed number of epochs and then compare the result to the testing dataset independetly. 
+
 # Proposal and Feasibility Review
 
 ## User Need, Scope & Acceptance Criteria
@@ -144,6 +146,7 @@ The results for the baseline VAE and VQ-VAE/Diffusion models are shown below:
 | 75 | 0.99 | 8.23 | 53.13 | Not copying |
 *Table 4: Diffusion Model Copying Results Table (With Laplacian Sharpness Loss)*
 
+
 The above tables provides sufficient evidence to accept the null hypothesis that the Stable Diffusion model does not copy training data. The VAE however, clearly does copy training data. Hence, this alone is highly convincing evidence that the Diffusion model should be prefered over the VAE for the research dilemma. 
 
 # TSNE Visualization
@@ -152,7 +155,7 @@ Below is the TSNE plot for the diffusion model with sharpness penalty.
 
 ![TSNE Plot](./resources/tsne_visualization.png)
 
-An interesting observation with this model is the bunching up of many samples in one area. This suggests either there is a bias with the sampling process that warrent further investigation. 
+An interesting observation with this model is the bunching up of many samples in one area. This suggests either there is a bias with the sampling process that warrent further investigation. However, it is apparent with the samples distribution that the diffusion model is likely not copying the training set.
 
 ## Qualitative Analysis
 
