@@ -164,20 +164,22 @@ The above tables provides sufficient evidence to accept the null hypothesis that
 
 # TSNE Visualization
 
-Below is the pixel-space TSNE plot for the diffusion model with sharpness penalty. 
-
 ![TSNE Plot Sharpness](./resources/tsne_visualization_sharpness.png)
+*TSNE plot for the diffusion model with sharpness penalty*
 
 An interesting observation with this model is the bunching up of many samples in one area. This is due to the laplacian sharpness loss, which forces the model to produce sharper images, causing many samples to cluster together.  
 
 ![TSNE Plot Regular](./resources/tsne_visualization.png)
+*TSNE plot for the diffusion model without sharpness penalty*
 
-Above is the TSNE plot for the diffusion model trained without laplacian sharness. Since the tsne visualization was made in pixel space, this clearly shows that the bunching up from the sharness loss model was due to the sharpness loss itself.
+Since the tsne visualization was made in pixel space, this clearly shows that the bunching up from the sharness loss model was due to the sharpness loss itself.
 
 Below are the TSNE plots for the latent spaces of the two trained diffusion models:
 ![TSNE Latent Plot Sharpness](./resources/tsne_visualization_latent_sharpness.png)
+*TSNE plot for the latent space of the diffusion model with sharpness penalty*
 
 ![TSNE Latent Plot Regular](./resources/tsne_visualization_latent_regular.png)
+*TSNE plot for the latent space of the diffusion model without sharpness penalty*
 
 It is apparent with both diffusion models, even in the latent space, that the samples distribution is likely not copying the training set. This further reinforces the Meehan test results. 
 
